@@ -1,5 +1,6 @@
 import dns.resolver
 import dns.exception
+from core.validator import encode_idn
 
 class DNSResolverEngine:
     def __init__(self, nameserver: str = None, timeout: float = 5.0):
@@ -11,15 +12,19 @@ class DNSResolverEngine:
 
     def query_record(self, domain: str, record_type: str) -> dict:
         """
-        Performs a robust DNS query for a specific record type.
+        Performs a robust DNS query for a specific record type supporting IDN domains.
         """
         r_type = record_type.upper()
+        # Convert IDN unicode domain to Punycode if necessary
+        target_domain = encode_idn(domain)
+        
         try:
-            answers = self.resolver.resolve(domain, r_type)
+            answers = self.resolver.resolve(target_domain, r_type)
             results = [str(rdata) for rdata in answers]
             return {
                 "status": "SUCCESS",
                 "domain": domain,
+                "punycode": target_domain if target_domain != domain else None,
                 "type": r_type,
                 "data": results,
                 "ttl": answers.rrset.ttl

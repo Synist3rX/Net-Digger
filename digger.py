@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 from core.resolver import DNSResolverEngine
 from core.exporter import export_to_json
+from core.validator import is_valid_domain, is_valid_ip
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -11,17 +12,17 @@ def parse_arguments():
     )
     
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("-d", "--domain", help="Target single domain to query (e.g., example.com)")
+    group.add_argument("-d", "--domain", help="Target single domain to query (e.g., example.com or eñe.es)")
     group.add_argument("-f", "--file", help="TXT file containing a list of domains (one per line)")
 
     parser.add_argument(
         "-t", "--type",
         default="A",
-        help="DNS record type (A, AAAA, MX, NS, TXT, CNAME, SOA, ALL). Default: A"
+        help="DNS record type (A, AAAA, MX, NS, TXT, CNAME, SOA, CAA, SRV, ALL). Default: A"
     )
     parser.add_argument(
         "-ns", "--nameserver",
-        help="Custom nameserver to query (e.g., 1.1.1.1 or 8.8.8.8)"
+        help="Custom nameserver IP to query (e.g., 1.1.1.1 or 8.8.8.8)"
     )
     parser.add_argument(
         "-to", "--timeout",
@@ -46,15 +47,37 @@ def load_domains_from_file(filepath: str) -> list[str]:
         for line in f:
             domain = line.strip()
             if domain and not domain.startswith("#"):
-                domains.append(domain)
+                if is_valid_domain(domain):
+                    domains.append(domain)
+                else:
+                    print(f"[!] Warning: Skipping invalid domain format in file: '{domain}'")
     return domains
 
 def main():
     args = parse_arguments()
+
+    # Validate custom nameserver IP if provided
+    if args.nameserver and not is_valid_ip(args.nameserver):
+        print(f"[!] Error: Invalid nameserver IP address format: '{args.nameserver}'")
+        sys.exit(1)
+
+    # Resolve and validate target domains
+    if args.domain:
+        if not is_valid_domain(args.domain):
+            print(f"[!] Error: Invalid domain format: '{args.domain}'")
+            sys.exit(1)
+        domains = [args.domain]
+    else:
+        domains = load_domains_from_file(args.file)
+        if not domains:
+            print("[!] Error: No valid domains found in the specified file.")
+            sys.exit(1)
+
     engine = DNSResolverEngine(nameserver=args.nameserver, timeout=args.timeout)
     
-    domains = [args.domain] if args.domain else load_domains_from_file(args.file)
-    record_types = ["A", "AAAA", "MX", "NS", "TXT", "CNAME"] if args.type.upper() == "ALL" else [args.type]
+    record_types = [
+        "A", "AAAA", "MX", "NS", "TXT", "CNAME", "CAA", "SRV", "SOA"
+    ] if args.type.upper() == "ALL" else [args.type]
 
     all_results = []
 
@@ -72,7 +95,8 @@ def main():
             domain_results["queries"].append(result)
             
             if result["status"] == "SUCCESS":
-                print(f"    [+] {result['type']} records (TTL: {result['ttl']}s):")
+                puny_info = f" (Punycode: {result['punycode']})" if result.get('punycode') else ""
+                print(f"    [+] {result['type']} records{puny_info} (TTL: {result['ttl']}s):")
                 for item in result["data"]:
                     print(f"        -> {item}")
             else:
