@@ -10,6 +10,9 @@ class DNSResolverEngine:
             self.resolver.nameservers = [nameserver]
 
     def query_record(self, domain: str, record_type: str) -> dict:
+        """
+        Performs a robust DNS query for a specific record type.
+        """
         r_type = record_type.upper()
         try:
             answers = self.resolver.resolve(domain, r_type)
@@ -25,19 +28,19 @@ class DNSResolverEngine:
             return {
                 "status": "ERROR",
                 "type": r_type,
-                "message": f"El dominio '{domain}' no existe (NXDOMAIN)."
+                "message": f"Domain '{domain}' does not exist (NXDOMAIN)."
             }
         except dns.resolver.NoAnswer:
             return {
                 "status": "ERROR",
                 "type": r_type,
-                "message": f"No se encontraron registros {r_type} para {domain}."
+                "message": f"No {r_type} records found for {domain}."
             }
         except dns.exception.Timeout:
             return {
                 "status": "ERROR",
                 "type": r_type,
-                "message": "La consulta DNS expiró (Timeout)."
+                "message": "DNS query timed out."
             }
         except Exception as e:
             return {
