@@ -28,6 +28,11 @@ def parse_arguments():
         help="Custom nameserver IP to query (e.g., 1.1.1.1 or 8.8.8.8)"
     )
     parser.add_argument(
+        "--tcp",
+        action="store_true",
+        help="Use TCP transport protocol instead of UDP for DNS queries"
+    )
+    parser.add_argument(
         "-to", "--timeout",
         type=float,
         default=5.0,
@@ -98,8 +103,13 @@ def main():
             print("[!] Error: No valid domains found in the specified file.")
             sys.exit(1)
 
-    # Inicializamos el motor pasando los reintentos configurados
-    engine = DNSResolverEngine(nameserver=args.nameserver, timeout=args.timeout, retries=args.retries)
+    # Inicializamos el motor pasando el parámetro use_tcp
+    engine = DNSResolverEngine(
+        nameserver=args.nameserver, 
+        timeout=args.timeout, 
+        retries=args.retries,
+        use_tcp=args.tcp
+    )
     
     record_types = [
         "A", "AAAA", "MX", "NS", "TXT", "CNAME", "CAA", "SRV", "SOA"
@@ -108,7 +118,9 @@ def main():
     all_results = []
     max_workers = min(10, len(domains)) if domains else 1
 
+    transport_mode = "TCP" if args.tcp else "UDP"
     print(f"\n[*] Starting concurrent DNS analysis for {len(domains)} domain(s) using {max_workers} thread(s)...")
+    print(f"[*] Transport Protocol: {transport_mode}")
     if args.nameserver:
         print(f"[*] Using custom nameserver: {args.nameserver}")
     print(f"[*] Retry policy: {args.retries} attempts with exponential backoff.")

@@ -4,17 +4,18 @@ import dns.exception
 from core.validator import encode_idn
 
 class DNSResolverEngine:
-    def __init__(self, nameserver: str = None, timeout: float = 5.0, retries: int = 3):
+    def __init__(self, nameserver: str = None, timeout: float = 5.0, retries: int = 3, use_tcp: bool = False):
         self.resolver = dns.resolver.Resolver()
         self.resolver.timeout = timeout
         self.resolver.lifetime = timeout
         self.retries = retries
+        self.use_tcp = use_tcp
         if nameserver:
             self.resolver.nameservers = [nameserver]
 
     def query_record(self, domain: str, record_type: str) -> dict:
         """
-        Performs a robust DNS query with automatic retries and exponential backoff.
+        Performs a robust DNS query with automatic retries, backoff, and TCP/UDP transport selection.
         """
         r_type = record_type.upper()
         target_domain = encode_idn(domain)
@@ -22,7 +23,8 @@ class DNSResolverEngine:
         attempt = 0
         while attempt < self.retries:
             try:
-                answers = self.resolver.resolve(target_domain, r_type)
+                # Se pasa el parámetro tcp según la configuración del engine
+                answers = self.resolver.resolve(target_domain, r_type, tcp=self.use_tcp)
                 results = [str(rdata) for rdata in answers]
                 return {
                     "status": "SUCCESS",
@@ -33,14 +35,12 @@ class DNSResolverEngine:
                     "ttl": answers.rrset.ttl
                 }
             except dns.resolver.NXDOMAIN:
-                # NXDOMAIN is definitive; do not retry non-existent domains
                 return {
                     "status": "ERROR",
                     "type": r_type,
                     "message": f"Domain '{domain}' does not exist (NXDOMAIN)."
                 }
             except dns.resolver.NoAnswer:
-                # NoAnswer is definitive for this record type; do not retry
                 return {
                     "status": "ERROR",
                     "type": r_type,
@@ -55,6 +55,5 @@ class DNSResolverEngine:
                         "message": f"DNS query failed after {self.retries} attempts. Last error: {str(e)}"
                     }
                 
-                # Exponential backoff calculation: 1s, 2s, 4s...
                 sleep_time = 2 ** (attempt - 1)
                 time.sleep(sleep_time)
