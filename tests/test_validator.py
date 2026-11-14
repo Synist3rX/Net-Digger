@@ -17,7 +17,7 @@ def test_is_valid_domain(domain, expected):
 
 @pytest.mark.parametrize("domain,expected_punycode", [
     ("example.com", "example.com"),
-    ("eñe.es", "xn--ee-zja.es"),       # Corregido con el punycode exacto
+    ("eñe.es", "xn--ee-zja.es"),
     ("münchen.de", "xn--mnchen-3ya.de"),
 ])
 def test_encode_idn(domain, expected_punycode):

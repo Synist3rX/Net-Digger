@@ -31,7 +31,13 @@ def parse_arguments():
         "-to", "--timeout",
         type=float,
         default=5.0,
-        help="Timeout in seconds (default: 5.0)"
+        help="Timeout in seconds per attempt (default: 5.0)"
+    )
+    parser.add_argument(
+        "-r", "--retries",
+        type=int,
+        default=3,
+        help="Maximum number of automatic retries on network failure (default: 3)"
     )
     parser.add_argument(
         "-o", "--output",
@@ -57,9 +63,6 @@ def load_domains_from_file(filepath: str) -> list[str]:
     return domains
 
 def process_single_domain(domain: str, engine: DNSResolverEngine, record_types: list[str]) -> dict:
-    """
-    Processes all requested DNS record queries for a single domain safely.
-    """
     domain_results = {"domain": domain, "queries": []}
     tqdm.write(f"\n[>] Target: {domain}")
     
@@ -80,12 +83,10 @@ def process_single_domain(domain: str, engine: DNSResolverEngine, record_types: 
 def main():
     args = parse_arguments()
 
-    # Validate custom nameserver IP if provided
     if args.nameserver and not is_valid_ip(args.nameserver):
         print(f"[!] Error: Invalid nameserver IP address format: '{args.nameserver}'")
         sys.exit(1)
 
-    # Resolve and validate target domains
     if args.domain:
         if not is_valid_domain(args.domain):
             print(f"[!] Error: Invalid domain format: '{args.domain}'")
@@ -97,7 +98,8 @@ def main():
             print("[!] Error: No valid domains found in the specified file.")
             sys.exit(1)
 
-    engine = DNSResolverEngine(nameserver=args.nameserver, timeout=args.timeout)
+    # Inicializamos el motor pasando los reintentos configurados
+    engine = DNSResolverEngine(nameserver=args.nameserver, timeout=args.timeout, retries=args.retries)
     
     record_types = [
         "A", "AAAA", "MX", "NS", "TXT", "CNAME", "CAA", "SRV", "SOA"
@@ -109,9 +111,9 @@ def main():
     print(f"\n[*] Starting concurrent DNS analysis for {len(domains)} domain(s) using {max_workers} thread(s)...")
     if args.nameserver:
         print(f"[*] Using custom nameserver: {args.nameserver}")
+    print(f"[*] Retry policy: {args.retries} attempts with exponential backoff.")
     print("-" * 50)
 
-    # ThreadPoolExecutor & tqdm progress bar integration
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_domain = {
             executor.submit(process_single_domain, domain, engine, record_types): domain 
