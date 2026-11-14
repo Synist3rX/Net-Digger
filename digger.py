@@ -2,6 +2,9 @@
 import sys
 import argparse
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from tqdm import tqdm
+
 from core.resolver import DNSResolverEngine
 from core.exporter import export_to_json
 from core.validator import is_valid_domain, is_valid_ip
@@ -50,8 +53,29 @@ def load_domains_from_file(filepath: str) -> list[str]:
                 if is_valid_domain(domain):
                     domains.append(domain)
                 else:
-                    print(f"[!] Warning: Skipping invalid domain format in file: '{domain}'")
+                    tqdm.write(f"[!] Warning: Skipping invalid domain format in file: '{domain}'")
     return domains
+
+def process_single_domain(domain: str, engine: DNSResolverEngine, record_types: list[str]) -> dict:
+    """
+    Processes all requested DNS record queries for a single domain safely.
+    """
+    domain_results = {"domain": domain, "queries": []}
+    tqdm.write(f"\n[>] Target: {domain}")
+    
+    for r_type in record_types:
+        result = engine.query_record(domain, r_type)
+        domain_results["queries"].append(result)
+        
+        if result["status"] == "SUCCESS":
+            puny_info = f" (Punycode: {result['punycode']})" if result.get('punycode') else ""
+            tqdm.write(f"    [+] {result['type']} records{puny_info} (TTL: {result['ttl']}s):")
+            for item in result["data"]:
+                tqdm.write(f"        -> {item}")
+        else:
+            tqdm.write(f"    [-] [{result['type']}] {result['message']}")
+            
+    return domain_results
 
 def main():
     args = parse_arguments()
@@ -80,29 +104,29 @@ def main():
     ] if args.type.upper() == "ALL" else [args.type]
 
     all_results = []
+    max_workers = min(10, len(domains)) if domains else 1
 
-    print(f"\n[*] Starting DNS analysis for {len(domains)} domain(s)...")
+    print(f"\n[*] Starting concurrent DNS analysis for {len(domains)} domain(s) using {max_workers} thread(s)...")
     if args.nameserver:
         print(f"[*] Using custom nameserver: {args.nameserver}")
     print("-" * 50)
 
-    for domain in domains:
-        domain_results = {"domain": domain, "queries": []}
-        print(f"\n[>] Target: {domain}")
+    # ThreadPoolExecutor & tqdm progress bar integration
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_domain = {
+            executor.submit(process_single_domain, domain, engine, record_types): domain 
+            for domain in domains
+        }
         
-        for r_type in record_types:
-            result = engine.query_record(domain, r_type)
-            domain_results["queries"].append(result)
-            
-            if result["status"] == "SUCCESS":
-                puny_info = f" (Punycode: {result['punycode']})" if result.get('punycode') else ""
-                print(f"    [+] {result['type']} records{puny_info} (TTL: {result['ttl']}s):")
-                for item in result["data"]:
-                    print(f"        -> {item}")
-            else:
-                print(f"    [-] [{result['type']}] {result['message']}")
-                
-        all_results.append(domain_results)
+        with tqdm(total=len(domains), desc="Progress", unit="domain", dynamic_ncols=True) as pbar:
+            for future in as_completed(future_to_domain):
+                try:
+                    domain_results = future.result()
+                    all_results.append(domain_results)
+                except Exception as e:
+                    tqdm.write(f"[!] Error processing domain: {e}")
+                finally:
+                    pbar.update(1)
 
     print("-" * 50)
 
