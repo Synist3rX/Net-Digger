@@ -1,17 +1,41 @@
-# NetDigger 🔍
+# Net Digger 🔍
 
-> Una herramienta CLI de Python robusta, modular y de alto rendimiento para consultas DNS avanzadas, reconocimiento de red y auditoría de dominios.
+> Una herramienta CLI de Python robusta, modular y de alto rendimiento para reconocimiento de dominios, consultas DNS avanzadas y auditoría de infraestructura de red.
 
 ---
 
 ## Características
 
-- **Soporte Multi-Registro**: Consulta registros DNS estándar (`A`, `AAAA`, `MX`, `NS`, `TXT`, `CNAME`, `SOA`) o ejecuta un reconocimiento completo (`ALL`).
-- **Nameservers Personalizados**: Enruta de forma fluida las consultas hacia servidores DNS específicos (por ejemplo, Cloudflare `1.1.1.1` o Google `8.8.8.8`).
-- **Procesamiento Masivo**: Audita listas de dominios de forma simultánea utilizando archivos TXT planos (`-f`).
-- **Exportación a JSON**: Formatea y exporta automáticamente los resultados estructurados de las auditorías para registros o reportes (`-o`).
-- **Arquitectura Modular**: Clara separación de responsabilidades con motores centrales dedicados (`resolver`, `exporter`) probados mediante `pytest`.
-- **Manejo de Errores Robusto**: Captura con gracia excepciones de red tales como `NXDOMAIN`, `NoAnswer` y `Timeout` sin interrumpir la terminal.
+- **Resumen de Objetivo (`[>] Target`) Siempre Visible**: Muestra automáticamente la resolución de IP, el registro inverso (`PTR`) y el estado HTTP (`HTTP Status`) de cada dominio consultado.
+- **Consultas DNS Multi-Registro (`-t` / `--type`)**: Soporta 12 tipos de registros DNS (`A`, `AAAA`, `MX`, `NS`, `TXT`, `CNAME`, `SOA`, `CAA`, `SRV`, `PTR`, `HTTPS`, `SVCB`) o el perfil completo (`ALL`), con desglose de prioridad, TTL y conteo total.
+- **Detección Automática de Proveedores**: Identifica el **DNS Provider** (a partir de registros `NS`) y el **Email Provider** (a partir de registros `MX`).
+- **Módulos de Inspección Especializados**:
+  - **SSL/TLS (`--ssl`)**: Inspección de certificados en el puerto 443 (emisor, vigencia, días restantes, versión TLS, cobertura de dominio, autofirmado y SANs).
+  - **WHOIS (`--whois`)**: Consulta directa de registro (registrador, fechas de creación/actualización/expiración, antigüedad, DNSSEC, nameservers y estados EPP).
+  - **Seguridad de Correo (`--email`)**: Auditoría de postura de autenticación evaluando **SPF** (con conteo de lookups DNS), **DMARC** (política y reportes) y selectores comunes de **DKIM**.
+- **Concurrencia y Resiliencia**: Procesamiento paralelo mediante `ThreadPoolExecutor` con barra de progreso (`tqdm`), soporte de transporte UDP o TCP (`--tcp`) y reintentos automáticos con *exponential backoff* (`-r`).
+- **Soporte IDN / Punycode y Validación**: Valida sintaxis de dominios (incluyendo caracteres internacionales como `eñe.es`), direcciones IP de nameservers y tipos de registro solicitados.
+- **Exportación a JSON (`-o`)**: Genera reportes estructurados listos para automatización o análisis posterior.
+
+---
+
+## Arquitectura del Proyecto
+
+```text
+net-digger/
+├── digger.py                  # Punto de entrada CLI, orquestación concurrente y validación de argumentos
+├── core/
+│   ├── resolver.py            # Motor de consultas DNS (UDP/TCP, timeouts y reintentos)
+│   ├── target_inspector.py    # Resolución inicial de objetivo (IP, PTR y HTTP Status)
+│   ├── ssl_inspector.py       # Auditoría de certificados TLS/SSL (puerto 443)
+│   ├── whois_inspector.py     # Consultas y parseo de registros WHOIS (puerto 43)
+│   ├── email_security.py      # Evaluación de SPF, DMARC y DKIM
+│   ├── detector.py            # Detección de proveedores de DNS y correo
+│   ├── validator.py           # Validación de dominios (IDN) e IPs
+│   ├── formatters.py          # Renderizado estructurado de bloques en terminal
+│   └── exporter.py            # Exportación de resultados a JSON
+└── tests/                     # Suite de pruebas unitarias con pytest
+```
 
 ---
 
@@ -43,61 +67,69 @@
 
 | Bandera / Opción | Descripción | Por defecto |
 | :--- | :--- | :--- |
-| `-d`, `--domain` | Dominio objetivo individual a consultar (mutuamente exclusivo con `-f`). | `None` |
-| `-f`, `--file` | Archivo TXT que contiene una lista de dominios a consultar (uno por línea). | `None` |
-| `-t`, `--type` | Tipo de registro DNS (`A`, `AAAA`, `MX`, `NS`, `TXT`, `CNAME`, `SOA`, `ALL`). | `A` |
-| `-ns`, `--nameserver` | IP del nameserver personalizado a consultar (ej. `1.1.1.1` u `8.8.8.8`). | DNS del sistema |
-| `-to`, `--timeout` | Límite de tiempo de espera en segundos para las consultas DNS. | `5.0` |
-| `-o`, `--output` | Ruta para exportar los resultados de la consulta a un archivo JSON estructurado. | `None` |
+| `DOMAIN` *(posicional)* | Dominio objetivo individual a consultar (ej. `google.com` o `eñe.es`). | `None` |
+| `-d`, `--domain` | Dominio objetivo individual (alternativa explícita al argumento posicional; excluyente con `-f`). | `None` |
+| `-f`, `--file` | Archivo TXT con una lista de dominios (uno por línea; ignora líneas vacías y `#` comentarios). | `None` |
+| `-t`, `--type` | Tipo(s) de registro DNS separados por coma (`A`, `AAAA`, `MX`, `NS`, `TXT`, `CNAME`, `SOA`, `CAA`, `SRV`, `PTR`, `HTTPS`, `SVCB`) o `ALL`. Si se pasa `-t` sin valor, asume `ALL`. | `None` *(solo Target)* |
+| `-ns`, `--nameserver` | Dirección IP del servidor DNS personalizado a utilizar (ej. `1.1.1.1` o `8.8.8.8`). | `1.1.1.1` |
+| `--tcp` | Fuerza el protocolo de transporte TCP en lugar de UDP para las consultas DNS. | `False` |
+| `-to`, `--timeout` | Tiempo máximo de espera en segundos por intento de consulta. | `5.0` |
+| `-r`, `--retries` | Número máximo de reintentos automáticos ante fallos de red. | `3` |
+| `--ssl` | Inspecciona el certificado TLS/SSL en el puerto 443 del dominio objetivo. | `False` |
+| `--whois` | Realiza una consulta WHOIS (puerto 43) para obtener datos de registro del dominio. | `False` |
+| `--email` | Audita la configuración de autenticación de correo (`SPF`, `DMARC` y `DKIM`). | `False` |
+| `--full` | Muestra valores íntegros sin truncar en tablas, SANs, estados WHOIS y registros SPF/DMARC. | `False` |
+| `--all` | Activa todos los módulos y salida completa (`-t ALL`, `--ssl`, `--whois`, `--email` y `--full`). | `False` |
+| `-o`, `--output` | Ruta del archivo donde se exportarán los resultados en formato JSON. | `None` |
 
 ---
 
 ## Ejemplos de Uso
 
-### 1. Consulta Básica de Registro A
-Consulta la dirección IPv4 por defecto para un dominio individual usando los resolutores del sistema:
+### 1. Reconocimiento Rápido de Objetivo (`Target`)
+Consulta únicamente la metadata básica del dominio (IP resuelta, PTR y código de estado HTTP) sin desplegar tablas DNS:
 ```bash
-python digger.py -d example.com
+python digger.py google.com
 ```
 
-### 2. Consulta de Registros de Correo (`MX`)
-Verifica los servidores de correo configurados para un dominio:
+### 2. Consulta de Registros DNS Específicos o Completos (`-t`)
+* **Consultar tipos específicos (separados por coma):**
+  ```bash
+  python digger.py google.com -t A,MX,TXT
+  ```
+* **Consultar todos los tipos soportados (`-t` sin valor o `-t ALL`):**
+  ```bash
+  python digger.py google.com -t
+  # Equivalente a:
+  python digger.py google.com -t ALL
+  ```
+
+### 3. Módulos Especializados (`--ssl`, `--whois`, `--email`)
+Puedes ejecutar módulos de auditoría de forma independiente o combinada:
+* **Auditar seguridad de correo electrónico:**
+  ```bash
+  python digger.py github.com --email
+  ```
+* **Inspeccionar certificado TLS/SSL y datos WHOIS:**
+  ```bash
+  python digger.py openai.com --ssl --whois
+  ```
+
+### 4. Auditoría Integral con Salida Completa (`--all`)
+Ejecuta simultáneamente la consulta de todos los registros DNS (`ALL`), inspección SSL, WHOIS, seguridad de correo y valores sin truncar (`--full`):
 ```bash
-python digger.py -d google.com -t MX
-```
-
-### 3. Uso de un Nameserver Personalizado y Tipo de Registro Específico
-Consulta los registros IPv6 (`AAAA`) para GitHub utilizando el DNS de Cloudflare (`1.1.1.1`):
-```bash
-python digger.py -d github.com -ns 1.1.1.1 -t AAAA
-```
-
-### 4. Reconocimiento Completo (`ALL`)
-Realiza una auditoría multi-registro en un dominio objetivo:
-```bash
-python digger.py -d openai.com -t ALL
-```
-
-### 5. Procesamiento Masivo y Exportación a JSON
-Lee múltiples dominios desde un archivo `targets.txt`, consulta sus registros MX usando el DNS de Google (`8.8.8.8`) y guarda la salida estructurada en un reporte JSON:
-```bash
-python digger.py -f targets.txt -ns 8.8.8.8 -t MX -o reports/mx_audit.json
-```
-
-## 🔍 Ejemplos de Uso: `DNS Records`
-
-**Net Digger** permite realizar auditorías completas de infraestructura DNS, extrayendo registros estándar y avanzados con desglose de **Prioridad**, **TTL**, conteo total de registros y detección automática de proveedores (**DNS Provider** y **Email Provider**).
-
-### 1. Consulta Completa de Registros (`-t ALL`)
-Realiza un reconocimiento integral de todos los tipos de registros soportados (`A`, `AAAA`, `MX`, `NS`, `TXT`, `CNAME`, `CAA`, `SRV`, `SOA`) utilizando un servidor DNS público confiable (como Cloudflare `1.1.1.1`):
-
-```bash
-python digger.py -d google.com -ns 1.1.1.1 -t ALL
+python digger.py google.com --all
 ```
 
 **Ejemplo de salida en consola:**
 ```text
-[>] Target: google.com (27 records found)
+[>] Target: google.com
+    Query           : google.com
+    Resolves To     : 142.251.215.238 (sea09s35-in-f14.1e100.net)
+    HTTP Status     : 200
+
+--------------------------------------------------------------------------------
+[>] DNS Records (27 records found)
     TYPE     PRIO   TTL      VALUE
     ------------------------------------------------------------------------
     A        -      99s      142.251.214.110
@@ -107,54 +139,34 @@ python digger.py -d google.com -ns 1.1.1.1 -t ALL
     TXT      -      3600s    v=spf1 include:_spf.google.com ~all
     SOA      -      60s      ns1.google.com
     CAA      -      86400s   0 issue "pki.goog"
-    ------------------------------------------------------------------------
     [*] DNS Provider   : Google Cloud DNS (detected via NS)
     [*] Email Provider : Google Workspace (detected via MX)
+
+--------------------------------------------------------------------------------
+[>] SSL Certificate
+    Status          : 64d left (TLS: TLSv1.3)
+    Common Name     : *.google.com
+    Issuer          : WE2
+    ...
+
+--------------------------------------------------------------------------------
+[>] WHOIS
+    Domain          : GOOGLE.COM
+    Registrar       : MarkMonitor Inc.
+    ...
+
+--------------------------------------------------------------------------------
+[>] Email Security
+    Overall         : Partial
+    SPF             : Soft Fail (~all) (1/10 lookups)
+    DMARC           : reject (Reports: mailauth-reports@google.com)
+    DKIM            : Detected (selector: google)
 ```
 
----
-
-### 2. Visualizar Valores Íntegros sin Recortes (`--full`)
-Por defecto, los valores muy extensos (como políticas SPF, llaves DKIM o verificaciones TXT) se acortan visualmente en la tabla para mantener la limpieza en pantalla. Utiliza la bandera `--full` para imprimir el contenido completo de cada registro:
-
+### 5. Auditoría Masiva Concurrente, TCP y Exportación a JSON
+Procesa una lista de dominios desde un archivo de texto utilizando transporte TCP, un nameserver personalizado y guarda los resultados estructurados en JSON:
 ```bash
-python digger.py -d google.com -ns 1.1.1.1 -t TXT --full
-```
-
----
-
-### 3. Consultas Específicas de Seguridad e Infraestructura (`CAA`, `SRV`, `MX`)
-Puedes auditar tipos de registros concretos de forma individual:
-
-* **Verificar Autoridades Certificadoras permitidas (SSL/TLS):**
-  ```bash
-  python digger.py -d github.com -ns 1.1.1.1 -t CAA
-  ```
-* **Inspeccionar servidores de correo y su prioridad:**
-  ```bash
-  python digger.py -d microsoft.com -ns 8.8.8.8 -t MX
-  ```
-* **Descubrir servicios activos en la red (`SRV`):**
-  ```bash
-  python digger.py -d microsoft.com -ns 1.1.1.1 -t SRV
-  ```
-
----
-
-### 4. Forzar Protocolo de Transporte TCP (`--tcp`)
-Útil cuando necesitas consultar zonas con respuestas muy grandes que exceden el límite de paquetes UDP o para evadir restricciones de red específicas *(requiere un Nameserver público que soporte Do53 sobre TCP)*:
-
-```bash
-python digger.py -d example.com -ns 1.1.1.1 -t ALL --tcp
-```
-
----
-
-### 5. Auditoría Masiva Concurrente y Exportación a JSON (`-f` + `-o`)
-Analiza una lista completa de dominios desde un archivo de texto en paralelo (multithreading con barra de progreso), aplica reintentos automáticos en caso de inestabilidad de red y guarda toda la estructura detallada en un archivo JSON:
-
-```bash
-python digger.py -f dominios.txt -ns 1.1.1.1 -t ALL -r 3 -o reportes/auditoria_dns.json
+python digger.py -f dominios.txt -ns 8.8.8.8 -t ALL --tcp -r 3 -o reportes/auditoria_dns.json
 ```
 
 **Estructura generada en el archivo JSON:**
@@ -162,6 +174,13 @@ python digger.py -f dominios.txt -ns 1.1.1.1 -t ALL -r 3 -o reportes/auditoria_d
 [
     {
         "domain": "google.com",
+        "target": {
+            "query": "google.com",
+            "ip": "142.251.215.238",
+            "ptr": "sea09s35-in-f14.1e100.net",
+            "resolves_to": "142.251.215.238 (sea09s35-in-f14.1e100.net)",
+            "http_status": 200
+        },
         "total_records": 27,
         "dns_provider": "Google Cloud DNS",
         "email_provider": "Google Workspace",
@@ -188,7 +207,7 @@ python digger.py -f dominios.txt -ns 1.1.1.1 -t ALL -r 3 -o reportes/auditoria_d
 
 ## Ejecución de Pruebas
 
-Net Digger incluye una suite completa de pruebas unitarias utilizando `pytest` y `unittest.mock` para garantizar la estabilidad sin conexión a internet a través de diferentes plataformas. Ejecuta la suite de pruebas con:
+Net Digger cuenta con una suite de pruebas unitarias construida con `pytest` y `unittest.mock` que valida los módulos de inspección, formateo, validación de argumentos y resolución DNS sin requerir conexión a internet:
 
 ```bash
 pytest -v
