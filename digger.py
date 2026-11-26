@@ -30,8 +30,11 @@ def parse_arguments():
         help="DNS record type (A, AAAA, MX, NS, TXT, CNAME, SOA, CAA, SRV, ALL). Default: A"
     )
     parser.add_argument(
-        "-ns", "--nameserver",
-        help="Custom nameserver IP to query (e.g., 1.1.1.1 or 8.8.8.8)"
+        "-ns",
+        "--nameserver",
+        dest="nameserver",
+        default="1.1.1.1",
+        help="Target DNS nameserver IP (default: 1.1.1.1)"
     )
     parser.add_argument(
         "--tcp",
