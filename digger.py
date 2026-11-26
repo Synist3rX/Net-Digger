@@ -1,18 +1,30 @@
 #!/usr/bin/env python3
-import sys
-import ssl
 import argparse
-from pathlib import Path
+import socket
+import sys
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from tqdm import tqdm
 
-from core.resolver import DNSResolverEngine
-from core.exporter import export_to_json
-from core.validator import is_valid_domain, is_valid_ip
 from core.detector import detect_dns_provider, detect_email_provider
-from core.ssl_inspector import inspect_ssl_certificate
-from core.whois_inspector import inspect_whois
 from core.email_security import inspect_email_security
+from core.exporter import export_to_json
+from core.resolver import DNSResolverEngine
+from core.ssl_inspector import inspect_ssl_certificate
+from core.target_inspector import gather_target_metadata
+from core.validator import is_valid_domain, is_valid_ip
+from core.whois_inspector import inspect_whois
+
+
+ALL_RECORD_TYPES = [
+    "A", "AAAA", "MX", "NS", "TXT", "CNAME", "SOA", "CAA", "SRV", "PTR", "HTTPS", "SVCB"
+]
+SEPARATOR_WIDTH = 80
+INTERN_SEPARATOR_WIDTH = 72
+SECTION_DIVIDER = "\n" + "-" * SEPARATOR_WIDTH
+INDENTED_DIVIDER = "    " + "-" * INTERN_SEPARATOR_WIDTH
 
 
 def parse_arguments():
@@ -26,8 +38,9 @@ def parse_arguments():
 
     parser.add_argument(
         "-t", "--type",
-        default="A",
-        help="DNS record type (A, AAAA, MX, NS, TXT, CNAME, SOA, CAA, SRV, ALL). Default: A"
+        dest="record_type",
+        default=None,
+        help="DNS record type (A, AAAA, MX, NS, TXT, CNAME, SOA, CAA, SRV, PTR, HTTPS, SVCB, ALL)"
     )
     parser.add_argument(
         "-ns",
@@ -77,7 +90,6 @@ def parse_arguments():
         action="store_true",
         help="Audit email authentication posture (SPF, DMARC, and common DKIM selectors)"
     )
-
     parser.add_argument(
         "--all",
         action="store_true",
@@ -85,6 +97,7 @@ def parse_arguments():
     )
 
     return parser.parse_args()
+
 
 def load_domains_from_file(filepath: str) -> list[str]:
     path = Path(filepath)
@@ -103,8 +116,18 @@ def load_domains_from_file(filepath: str) -> list[str]:
                     tqdm.write(f"[!] Warning: Skipping invalid domain format in file: '{domain}'")
     return domains
 
+
+def format_target_header(domain: str, target_meta: dict) -> list[str]:
+    return [
+        f"\n[>] Target: {domain}",
+        f"    {'Query':<16}: {target_meta.get('query', domain)}",
+        f"    {'Resolves To':<16}: {target_meta.get('resolves_to', 'N/A')}",
+        f"    {'HTTP Status':<16}: {target_meta.get('http_status', 'N/A')}",
+    ]
+
+
 def format_ssl_block(ssl_info: dict, full_output: bool = False) -> list[str]:
-    lines = ["\n" + "-" * 76, "[>] SSL Certificate"]
+    lines = [SECTION_DIVIDER, "[>] SSL Certificate"]
 
     if not isinstance(ssl_info, dict):
         lines.append("    [-] SSL inspection returned no data (None).")
@@ -119,14 +142,14 @@ def format_ssl_block(ssl_info: dict, full_output: bool = False) -> list[str]:
     covered_str = "Yes" if ssl_info["domain_included"] else "No"
     self_signed_str = "Yes" if ssl_info["is_self_signed"] else "No"
 
-    lines.append(f"    Status          : {badge} (TLS: {ssl_info.get('tls_version') or 'N/A'})")
-    lines.append(f"    Common Name     : {ssl_info['common_name']}")
-    lines.append(f"    Issuer          : {ssl_info['issuer']}")
-    lines.append(f"    Valid From      : {ssl_info['valid_from']}")
-    lines.append(f"    Expires         : {ssl_info['expires']}")
-    lines.append(f"    Days Remaining  : {days if days is not None else 'N/A'}")
-    lines.append(f"    Domain Included : {covered_str}")
-    lines.append(f"    Self-Signed     : {self_signed_str}")
+    lines.append(f"    {'Status':<16}: {badge} (TLS: {ssl_info.get('tls_version') or 'N/A'})")
+    lines.append(f"    {'Common Name':<16}: {ssl_info['common_name']}")
+    lines.append(f"    {'Issuer':<16}: {ssl_info['issuer']}")
+    lines.append(f"    {'Valid From':<16}: {ssl_info['valid_from']}")
+    lines.append(f"    {'Expires':<16}: {ssl_info['expires']}")
+    lines.append(f"    {'Days Remaining':<16}: {days if days is not None else 'N/A'}")
+    lines.append(f"    {'Domain Included':<16}: {covered_str}")
+    lines.append(f"    {'Self-Signed':<16}: {self_signed_str}")
 
     sans = ssl_info.get("sans", [])
     if sans:
@@ -143,8 +166,9 @@ def format_ssl_block(ssl_info: dict, full_output: bool = False) -> list[str]:
 
     return lines
 
+
 def format_whois_block(whois_info: dict | None, full_output: bool = False) -> list[str]:
-    lines = ["\n" + "-" * 76, "[>] WHOIS"]
+    lines = [SECTION_DIVIDER, "[>] WHOIS"]
 
     if not isinstance(whois_info, dict):
         lines.append("    [-] WHOIS inspection returned no data.")
@@ -188,8 +212,9 @@ def format_whois_block(whois_info: dict | None, full_output: bool = False) -> li
 
     return lines
 
+
 def format_email_security_block(email_info: dict | None, full_output: bool = False) -> list[str]:
-    lines = ["\n" + "-" * 76, "[>] Email Security"]
+    lines = [SECTION_DIVIDER, "[>] Email Security"]
 
     if not isinstance(email_info, dict):
         lines.append("    [-] Email security inspection returned no data.")
@@ -208,7 +233,7 @@ def format_email_security_block(email_info: dict | None, full_output: bool = Fal
     lines.append(f"    {'SPF':<16}: {spf_status} ({spf_lookups})")
     if spf.get("record"):
         rec = spf["record"]
-        if not full_output and len(rec) > 72:
+        if not full_output and len(rec) > INTERN_SEPARATOR_WIDTH:
             rec = rec[:69] + "..."
         lines.append(f"    {'SPF Record':<16}: {rec}")
 
@@ -220,7 +245,7 @@ def format_email_security_block(email_info: dict | None, full_output: bool = Fal
         lines.append(f"    {'DMARC':<16}: {pol} ({reports})")
         if dmarc.get("record"):
             drec = dmarc["record"]
-            if not full_output and len(drec) > 72:
+            if not full_output and len(drec) > INTERN_SEPARATOR_WIDTH:
                 drec = drec[:69] + "..."
             lines.append(f"    {'DMARC Record':<16}: {drec}")
     else:
@@ -234,70 +259,95 @@ def format_email_security_block(email_info: dict | None, full_output: bool = Fal
 
     return lines
 
-def process_single_domain(domain: str, engine: DNSResolverEngine, record_types: list[str], full_output: bool = False,
-                          inspect_ssl: bool = False, inspect_whois_flag: bool = False, inspect_email: bool = False) -> dict:
+
+def process_single_domain(
+    domain: str,
+    engine: DNSResolverEngine,
+    record_types: list[str],
+    show_dns_records: bool = False,
+    full_output: bool = False,
+    inspect_ssl: bool = False,
+    inspect_whois_flag: bool = False,
+    inspect_email: bool = False,
+) -> dict:
     domain_results = {
         "domain": domain,
+        "target": {},
         "total_records": 0,
         "dns_provider": "Unknown",
         "email_provider": "Unknown",
-        "queries": []
+        "queries": [],
     }
 
     table_rows = []
     ns_values = []
     mx_values = []
+    first_a_record = None
 
-    for r_type in record_types:
-        result = engine.query_record(domain, r_type)
-        if not isinstance(result, dict):
-            result = {
-                "status": "ERROR",
-                "type": r_type.upper(),
-                "message": "Empty response received from DNS resolver engine."
-            }
+    if show_dns_records:
+        for r_type in record_types:
+            result = engine.query_record(domain, r_type)
+            if not isinstance(result, dict):
+                result = {
+                    "status": "ERROR",
+                    "type": r_type.upper(),
+                    "message": "Empty response received from DNS resolver engine.",
+                }
 
-        domain_results["queries"].append(result)
+            domain_results["queries"].append(result)
 
-        if result.get("status") == "SUCCESS":
-            ttl_str = f"{result.get('ttl', 0)}s"
-            for rec in result.get("records", []):
-                domain_results["total_records"] += 1
-                prio_str = str(rec["priority"]) if rec.get("priority") is not None else ""
-                table_rows.append((result["type"], rec.get("value", ""), prio_str, ttl_str))
+            if result.get("status") == "SUCCESS":
+                ttl_str = f"{result.get('ttl', 0)}s"
+                for rec in result.get("records", []):
+                    domain_results["total_records"] += 1
+                    val = str(rec.get("value", ""))
+                    prio_str = str(rec["priority"]) if rec.get("priority") is not None else ""
+                    table_rows.append((result["type"], val, prio_str, ttl_str))
 
-                if result["type"] == "NS":
-                    ns_values.append(rec.get("value", ""))
-                elif result["type"] == "MX":
-                    mx_values.append(rec.get("value", ""))
+                    if result["type"] == "A" and not first_a_record and val.strip():
+                        first_a_record = val.strip()
+                    elif result["type"] == "NS":
+                        ns_values.append(val)
+                    elif result["type"] == "MX":
+                        mx_values.append(val)
 
-    # Inferir proveedores si se consultaron NS o MX
-    if "NS" in [rt.upper() for rt in record_types]:
-        domain_results["dns_provider"] = detect_dns_provider(ns_values)
-    if "MX" in [rt.upper() for rt in record_types]:
-        domain_results["email_provider"] = detect_email_provider(mx_values)
+        if "NS" in [rt.upper() for rt in record_types]:
+            domain_results["dns_provider"] = detect_dns_provider(ns_values)
+        if "MX" in [rt.upper() for rt in record_types]:
+            domain_results["email_provider"] = detect_email_provider(mx_values)
 
-    # Renderizado limpio estilo tabla en terminal
-    output_lines = [f"\n[>] Target: {domain} ({domain_results['total_records']} records found)"]
+    target_meta = gather_target_metadata(
+        domain,
+        engine,
+        candidate_ip=first_a_record,
+        timeout=min(engine.resolver.timeout, 4.0),
+    )
+    domain_results["target"] = target_meta
 
-    if table_rows:
-        output_lines.append(f"    {'TYPE':<8} {'PRIO':<6} {'TTL':<8} {'VALUE'}")
-        output_lines.append("    " + "-" * 72)
-        for r_type, val, prio, ttl in table_rows:
-            prio_display = prio if prio else "-"
-            if full_output or len(val) <= 60:
-                display_val = val
-            else:
-                display_val = val[:57] + "..."
-            output_lines.append(f"    {r_type:<8} {prio_display:<6} {ttl:<8} {display_val}")
-    else:
-        output_lines.append("    [-] No DNS records retrieved for the requested type(s).")
+    # Sección del target siempre visible
+    output_lines = format_target_header(domain, target_meta)
 
-    output_lines.append("    " + "-" * 70)
-    if "NS" in [rt.upper() for rt in record_types]:
-        output_lines.append(f"    [*] DNS Provider   : {domain_results['dns_provider']} (detected via NS)")
-    if "MX" in [rt.upper() for rt in record_types]:
-        output_lines.append(f"    [*] Email Provider : {domain_results['email_provider']} (detected via MX)")
+    # Sección de DNS Records solo cuando se solicita -t / --type o --all
+    if show_dns_records:
+        output_lines.append(SECTION_DIVIDER)
+        output_lines.append(f"[>] DNS Records ({domain_results['total_records']} records found)")
+        if table_rows:
+            output_lines.append(f"    {'TYPE':<8} {'PRIO':<6} {'TTL':<8} {'VALUE'}")
+            output_lines.append(INDENTED_DIVIDER)
+            for r_type, val, prio, ttl in table_rows:
+                prio_display = prio if prio else "-"
+                if full_output or len(val) <= 60:
+                    display_val = val
+                else:
+                    display_val = val[:57] + "..."
+                output_lines.append(f"    {r_type:<8} {prio_display:<6} {ttl:<8} {display_val}")
+        else:
+            output_lines.append("    [-] No DNS records retrieved for the requested type(s).")
+
+        if "NS" in [rt.upper() for rt in record_types]:
+            output_lines.append(f"    [*] DNS Provider   : {domain_results['dns_provider']} (detected via NS)")
+        if "MX" in [rt.upper() for rt in record_types]:
+            output_lines.append(f"    [*] Email Provider : {domain_results['email_provider']} (detected via MX)")
 
     if inspect_ssl:
         ssl_info = inspect_ssl_certificate(domain, timeout=engine.resolver.timeout)
@@ -314,6 +364,7 @@ def process_single_domain(domain: str, engine: DNSResolverEngine, record_types: 
         domain_results["email_security"] = email_info
         output_lines.extend(format_email_security_block(email_info, full_output=full_output))
 
+    output_lines.append("-"*80)
     tqdm.write("\n".join(output_lines))
     return domain_results
 
@@ -341,17 +392,22 @@ def main():
     args.email = args.email or args.all
     args.full = args.full or args.all
 
-    # Inicializamos el motor pasando el parámetro use_tcp
-    engine = DNSResolverEngine(
-        nameserver=args.nameserver, 
-        timeout=args.timeout, 
-        retries=args.retries,
-        use_tcp=args.tcp
-    )
+    show_dns_records = (args.record_type is not None) or args.all
+    if show_dns_records:
+        effective_type = args.record_type if args.record_type is not None else "ALL"
+        if effective_type.upper() == "ALL":
+            record_types = ALL_RECORD_TYPES
+        else:
+            record_types = [rt.strip().upper() for rt in effective_type.split(",") if rt.strip()]
+    else:
+        record_types = []
 
-    record_types = [
-        "A", "AAAA", "MX", "NS", "TXT", "CNAME", "SOA", "CAA", "SRV", "PTR", "HTTPS", "SVCB"
-    ] if args.type.upper() == "ALL" else [args.type]
+    engine = DNSResolverEngine(
+        nameserver=args.nameserver,
+        timeout=args.timeout,
+        retries=args.retries,
+        use_tcp=args.tcp,
+    )
 
     all_results = []
     max_workers = min(10, len(domains)) if domains else 1
@@ -371,6 +427,7 @@ def main():
                 domain,
                 engine,
                 record_types,
+                show_dns_records,
                 args.full,
                 args.ssl,
                 args.whois,
