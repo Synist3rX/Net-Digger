@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 import argparse
-import socket
 import sys
-import urllib.error
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from tqdm import tqdm
 
+from core.blacklist_inspector import inspect_blacklist_block
 from core.detector import detect_dns_provider, detect_email_provider
 from core.email_security import inspect_email_security
 from core.exporter import export_to_json, resolve_output_path
@@ -15,16 +13,17 @@ from core.formatters import (
     format_blacklist_block,
     format_dns_records_block,
     format_email_security_block,
+    format_http_headers_block,
     format_ssl_block,
     format_target_header,
     format_whois_block,
 )
+from core.http_inspector import inspect_http_headers
 from core.resolver import DNSResolverEngine
 from core.ssl_inspector import inspect_ssl_certificate
 from core.target_inspector import gather_target_metadata
 from core.validator import is_valid_domain, is_valid_ip
 from core.whois_inspector import inspect_whois
-from core.blacklist_inspector import inspect_blacklist_block
 
 
 SUPPORTED_RECORD_TYPES = (
@@ -118,9 +117,14 @@ def parse_arguments():
         help="Check target IP and domain against common DNSBL and URIBL blacklists",
     )
     parser.add_argument(
+        "--headers",
+        action="store_true",
+        help="Inspect HTTP status, redirect chain, security headers, and response headers",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
-        help="Enable all inspection modules and full output (--ssl, --whois, --email, and --full)"
+        help="Enable all inspection modules and full output (-t ALL, --ssl, --whois, --email, --blacklist, --headers and --full)"
     )
 
     return parser.parse_args()
@@ -185,6 +189,7 @@ def process_single_domain(
     show_dns_records: bool = False,
     inspect_blacklist: bool = False,
     inspect_email: bool = False,
+    inspect_headers: bool = False,
     inspect_ssl: bool = False,
     inspect_whois_flag: bool = False,
     full_output: bool = False,
@@ -251,6 +256,14 @@ def process_single_domain(
             ip=target_meta.get("ip"),
         )
         domain_results["blacklist"] = blacklist_info
+    
+    http_headers_info = None
+    if inspect_headers:
+        http_headers_info = inspect_http_headers(
+            target=domain,
+            engine=engine,
+        )
+        domain_results["http_headers"] = http_headers_info
 
     # Sección del target siempre visible
     output_lines = format_target_header(domain, target_meta)
@@ -291,6 +304,14 @@ def process_single_domain(
             )
         )
 
+    if inspect_headers:
+        output_lines.extend(
+            format_http_headers_block(
+                http_info=http_headers_info,
+                full_output=full_output,
+            )
+        )
+
     output_lines.append("\n" + "-"*80)
     tqdm.write("\n".join(output_lines))
     return domain_results
@@ -325,6 +346,7 @@ def main():
 
     args.blacklist = args.blacklist or args.all
     args.email = args.email or args.all
+    args.headers = args.headers or args.all
     args.ssl = args.ssl or args.all
     args.whois = args.whois or args.all
     args.full = args.full or args.all
@@ -375,6 +397,7 @@ def main():
                 show_dns_records,
                 args.blacklist,
                 args.email,
+                args.headers,
                 args.ssl,
                 args.whois,
                 args.full,

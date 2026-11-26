@@ -163,3 +163,65 @@ def test_process_single_domain_runs_blacklist_module():
     assert "Overall         : Clean" in rendered
     assert "Clean: 13/13" in rendered
     assert res["blacklist"] == fake_blacklist
+
+def test_process_single_domain_runs_blacklist_and_headers():
+    engine = MagicMock()
+    engine.resolver.timeout = 5.0
+
+    fake_target = {
+        "query": "google.com",
+        "ip": "142.251.45.14",
+        "ptr": None,
+        "resolves_to": "142.251.45.14",
+        "http_status": 200,
+    }
+    fake_blacklist = {
+        "status": "SUCCESS",
+        "overall_status": "Listed",
+        "checked_ip": "142.251.45.14",
+        "checked_domain": "google.com",
+        "total_checked": 13,
+        "listed_count": 2,
+        "clean_count": 11,
+        "error_count": 0,
+        "checks": [
+            {"name": "Spamhaus PBL", "scope": "ip", "status": "Listed", "response": "Listed", "message": None},
+            {"name": "URIBL", "scope": "domain", "status": "Listed", "response": "Listed", "message": None},
+        ],
+    }
+    fake_headers = {
+        "status": "SUCCESS",
+        "final_url": "http://www.google.com/",
+        "status_code": 200,
+        "redirect_chain": [
+            {"status_code": 301, "url": "http://google.com", "location": "http://www.google.com/"},
+            {"status_code": 200, "url": "http://www.google.com/", "location": None},
+        ],
+        "security_headers": {"present_count": 2, "total_count": 7, "items": []},
+        "all_headers": {"server": "gws"},
+    }
+
+    with (
+        patch("digger.gather_target_metadata", return_value=fake_target),
+        patch("digger.inspect_blacklist_block", return_value=fake_blacklist) as mock_bl,
+        patch("digger.inspect_http_headers", return_value=fake_headers) as mock_hdr,
+        patch("digger.tqdm.write") as mock_write,
+    ):
+        res = process_single_domain(
+            domain="google.com",
+            engine=engine,
+            record_types=[],
+            show_dns_records=False,
+            inspect_blacklist=True,
+            inspect_headers=True,
+            full_output=False,
+        )
+
+    mock_bl.assert_called_once_with(domain="google.com", engine=engine, ip="142.251.45.14")
+    mock_hdr.assert_called_once_with(target="google.com", engine=engine)
+
+    rendered = mock_write.call_args[0][0]
+    assert "[>] Blacklist Check" in rendered
+    assert "[>] HTTP & Headers" in rendered
+    assert res["blacklist"] == fake_blacklist
+    assert res["http_headers"] == fake_headers

@@ -245,3 +245,58 @@ def format_blacklist_block(
     lines.append(INDENTED_DIVIDER)
 
     return lines
+
+
+def format_http_headers_block(
+    http_info: dict | None,
+    full_output: bool = False,
+) -> list[str]:
+    lines = [SECTION_DIVIDER, "[>] HTTP & Headers"]
+
+    if not isinstance(http_info, dict):
+        lines.append("    [-] HTTP inspection returned no data.")
+        return lines
+
+    if http_info.get("status") != "SUCCESS":
+        lines.append(f"    [-] {http_info.get('message', 'Unknown HTTP error')}")
+        return lines
+
+    status_code = http_info.get("status_code", "N/A")
+    final_url = http_info.get("final_url", "N/A")
+    lines.append(f"    {'Status':<16}: {status_code}")
+    lines.append(f"    {'Final URL':<16}: {final_url}")
+
+    chain = http_info.get("redirect_chain") or []
+    if chain:
+        formatted_hops = " -> ".join(
+            f"{hop.get('status_code')} {hop.get('url')}" for hop in chain
+        )
+        lines.append(f"    {'Redirect Chain':<16}: {formatted_hops}")
+
+    sec = http_info.get("security_headers") or {}
+    present_cnt = sec.get("present_count", 0)
+    total_cnt = sec.get("total_count", 7)
+    sec_items = sec.get("items") or []
+
+    lines.append(INDENTED_DIVIDER)
+    lines.append(f"    {'Security Headers':<16}: {present_cnt}/{total_cnt}")
+    lines.append(INDENTED_DIVIDER)
+    for item in sec_items:
+        name = str(item.get("name", ""))
+        if item.get("present"):
+            val_display = str(item.get("value", ""))
+            if not full_output and len(val_display) > 42:
+                val_display = val_display[:39] + "..."
+            lines.append(f"        [✔] {name:<28} {val_display}")
+        else:
+            lines.append(f"        [✖] {name:<28} not set")
+
+    all_headers = http_info.get("all_headers") or {}
+    if full_output and all_headers:
+        lines.append(INDENTED_DIVIDER)
+        lines.append(f"    {'All Headers':<16}: ({len(all_headers)})")
+        lines.append(INDENTED_DIVIDER)
+        for key, val in all_headers.items():
+            lines.append(f"        {key}: {val}")
+
+    return lines
