@@ -25,15 +25,15 @@
 net-digger/
 ├── digger.py                  # Punto de entrada CLI, orquestación concurrente y validación de argumentos
 ├── core/
-│   ├── resolver.py            # Motor de consultas DNS (UDP/TCP, timeouts y reintentos)
-│   ├── target_inspector.py    # Resolución inicial de objetivo (IP, PTR y HTTP Status)
-│   ├── ssl_inspector.py       # Auditoría de certificados TLS/SSL (puerto 443)
-│   ├── whois_inspector.py     # Consultas y parseo de registros WHOIS (puerto 43)
-│   ├── email_security.py      # Evaluación de SPF, DMARC y DKIM
 │   ├── detector.py            # Detección de proveedores de DNS y correo
-│   ├── validator.py           # Validación de dominios (IDN) e IPs
+│   ├── email_security.py      # Evaluación de SPF, DMARC y DKIM
+│   ├── exporter.py            # Exportación de resultados a JSON
 │   ├── formatters.py          # Renderizado estructurado de bloques en terminal
-│   └── exporter.py            # Exportación de resultados a JSON
+│   ├── resolver.py            # Motor de consultas DNS (UDP/TCP, timeouts y reintentos)
+│   ├── ssl_inspector.py       # Auditoría de certificados TLS/SSL (puerto 443)
+│   ├── target_inspector.py    # Resolución inicial de objetivo (IP, PTR y HTTP Status)
+│   ├── validator.py           # Validación de dominios (IDN) e IPs
+│   └── whois_inspector.py     # Consultas y parseo de registros WHOIS (puerto 43)
 └── tests/                     # Suite de pruebas unitarias con pytest
 ```
 
