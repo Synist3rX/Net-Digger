@@ -225,3 +225,52 @@ def test_process_single_domain_runs_blacklist_and_headers():
     assert "[>] HTTP & Headers" in rendered
     assert res["blacklist"] == fake_blacklist
     assert res["http_headers"] == fake_headers
+
+
+def test_process_single_domain_runs_geolocation():
+    engine = MagicMock()
+    engine.resolver.timeout = 5.0
+
+    fake_target = {
+        "query": "google.com",
+        "ip": "142.251.34.78",
+        "ptr": None,
+        "resolves_to": "142.251.34.78",
+        "http_status": 200,
+    }
+    fake_geo = {
+        "status": "SUCCESS",
+        "ip": "142.251.34.78",
+        "country": "United States",
+        "country_code": "US",
+        "region": "Texas",
+        "city": "Dallas",
+        "location": "Dallas, Texas, US",
+        "timezone": "America/Chicago",
+        "coordinates": "37.751, -97.822",
+        "latitude": 37.751,
+        "longitude": -97.822,
+        "asn": "AS15169",
+        "organization": "Google LLC",
+        "isp_org": "AS15169 Google LLC",
+    }
+
+    with (
+        patch("digger.gather_target_metadata", return_value=fake_target),
+        patch("digger.run_geolocation_inspection", return_value=fake_geo) as mock_geo,
+        patch("digger.tqdm.write") as mock_write,
+    ):
+        res = process_single_domain(
+            domain="google.com",
+            engine=engine,
+            record_types=[],
+            show_dns_records=False,
+            inspect_geolocation=True,
+            full_output=False,
+        )
+
+    mock_geo.assert_called_once_with(ip="142.251.34.78", engine=engine)
+    rendered = mock_write.call_args[0][0]
+    assert "[>] Geolocation & ASN" in rendered
+    assert "ASN             : AS15169" in rendered
+    assert res["geolocation"] == fake_geo

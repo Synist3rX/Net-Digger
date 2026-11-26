@@ -13,11 +13,13 @@ from core.formatters import (
     format_blacklist_block,
     format_dns_records_block,
     format_email_security_block,
+    format_geolocation_block,
     format_http_headers_block,
     format_ssl_block,
     format_target_header,
     format_whois_block,
 )
+from core.geo_inspector import inspect_geolocation as run_geolocation_inspection
 from core.http_inspector import inspect_http_headers
 from core.resolver import DNSResolverEngine
 from core.ssl_inspector import inspect_ssl_certificate
@@ -122,9 +124,16 @@ def parse_arguments():
         help="Inspect HTTP status, redirect chain, security headers, and response headers",
     )
     parser.add_argument(
+        "--geo",
+        "--geolocation",
+        dest="geolocation",
+        action="store_true",
+        help="Inspect IP geolocation and ASN information for the target domain",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
-        help="Enable all inspection modules and full output (-t ALL, --ssl, --whois, --email, --blacklist, --headers and --full)"
+        help="Enable all inspection modules and full output (-t ALL, --ssl, --whois, --email, --blacklist, --headers, --geolocation and --full)"
     )
 
     return parser.parse_args()
@@ -189,6 +198,7 @@ def process_single_domain(
     show_dns_records: bool = False,
     inspect_blacklist: bool = False,
     inspect_email: bool = False,
+    inspect_geolocation: bool = False,
     inspect_headers: bool = False,
     inspect_ssl: bool = False,
     inspect_whois_flag: bool = False,
@@ -265,6 +275,14 @@ def process_single_domain(
         )
         domain_results["http_headers"] = http_headers_info
 
+    geolocation_info = None
+    if inspect_geolocation:
+        geolocation_info = run_geolocation_inspection(
+            ip=target_meta.get("ip"),
+            engine=engine,
+        )
+        domain_results["geolocation"] = geolocation_info
+
     # Sección del target siempre visible
     output_lines = format_target_header(domain, target_meta)
 
@@ -312,6 +330,14 @@ def process_single_domain(
             )
         )
 
+    if inspect_geolocation:
+        output_lines.extend(
+            format_geolocation_block(
+                geo_info=geolocation_info,
+                full_output=full_output,
+            )
+        )
+
     output_lines.append("\n" + "-"*80)
     tqdm.write("\n".join(output_lines))
     return domain_results
@@ -346,6 +372,7 @@ def main():
 
     args.blacklist = args.blacklist or args.all
     args.email = args.email or args.all
+    args.geolocation = args.geolocation or args.all
     args.headers = args.headers or args.all
     args.ssl = args.ssl or args.all
     args.whois = args.whois or args.all
@@ -397,6 +424,7 @@ def main():
                 show_dns_records,
                 args.blacklist,
                 args.email,
+                args.geolocation,
                 args.headers,
                 args.ssl,
                 args.whois,

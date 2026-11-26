@@ -300,3 +300,35 @@ def format_http_headers_block(
             lines.append(f"        {key}: {val}")
 
     return lines
+
+
+def format_geolocation_block(
+    geo_info: dict | None,
+    full_output: bool = False,
+) -> list[str]:
+    lines = [SECTION_DIVIDER, "[>] Geolocation & ASN"]
+
+    if not isinstance(geo_info, dict):
+        lines.append("    [-] Geolocation inspection returned no data.")
+        return lines
+
+    status = geo_info.get("status")
+    if status == "SKIPPED":
+        lines.append(f"    [*] {geo_info.get('message', 'Geolocation lookup skipped.')}")
+        return lines
+
+    if status != "SUCCESS":
+        lines.append(f"    [-] {geo_info.get('message', 'Unknown geolocation error')}")
+        return lines
+
+    lines.append(f"    {'IP Address':<16}: {geo_info.get('ip', 'N/A')}")
+    lines.append(f"    {'Location':<16}: {geo_info.get('location', 'Unknown')}")
+    if full_output and geo_info.get("country") not in {"Unknown", None}:
+        lines.append(f"    {'Country':<16}: {geo_info.get('country')} ({geo_info.get('country_code', 'N/A')})")
+    lines.append(f"    {'Timezone':<16}: {geo_info.get('timezone', 'Unknown')}")
+    lines.append(f"    {'Coordinates':<16}: {geo_info.get('coordinates', 'N/A')}")
+    lines.append(f"    {'ASN':<16}: {geo_info.get('asn', 'Unknown')}")
+    lines.append(f"    {'Organization':<16}: {geo_info.get('organization', 'Unknown')}")
+    lines.append(f"    {'ISP / Org':<16}: {geo_info.get('isp_org', 'Unknown')}")
+
+    return lines

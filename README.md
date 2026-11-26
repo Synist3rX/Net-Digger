@@ -1,4 +1,4 @@
-# Net Digger 🔍
+# Net Digger 🔍 (`v1.12.0`)
 
 > Una herramienta CLI de Python robusta, modular y de alto rendimiento para reconocimiento de dominios, consultas DNS avanzadas y auditoría de infraestructura de red.
 
@@ -6,17 +6,16 @@
 
 ## Características
 
-Versión: `v1.11.0`
-
 - **Resumen de Objetivo (`[>] Target`) Siempre Visible**: Muestra automáticamente la resolución de IP, el registro inverso (`PTR`) y el estado HTTP (`HTTP Status`) de cada dominio consultado.
 - **Consultas DNS Multi-Registro (`-t` / `--type`)**: Soporta 12 tipos de registros DNS (`A`, `AAAA`, `MX`, `NS`, `TXT`, `CNAME`, `SOA`, `CAA`, `SRV`, `PTR`, `HTTPS`, `SVCB`) o el perfil completo (`ALL`), con desglose de prioridad, TTL y conteo total.
 - **Detección Automática de Proveedores**: Identifica el **DNS Provider** (a partir de registros `NS`) y el **Email Provider** (a partir de registros `MX`).
-- **Módulos de Inspección Especializados** (**`--all`** aplica todos):
+- **Módulos de Inspección Especializados**:
   - **SSL/TLS (`--ssl`)**: Inspección de certificados en el puerto 443 (emisor, vigencia, días restantes, versión TLS, cobertura de dominio, autofirmado y SANs).
   - **WHOIS (`--whois`)**: Consulta directa de registro (registrador, fechas de creación/actualización/expiración, antigüedad, DNSSEC, nameservers y estados EPP).
   - **Seguridad de Correo (`--email`)**: Auditoría de postura de autenticación evaluando **SPF** (con conteo de lookups DNS), **DMARC** (política y reportes) y selectores comunes de **DKIM**.
   - **Reputación / Blacklist (`--blacklist`)**: Consulta la reputación de la IP y el dominio objetivo frente a listas DNSBL y URIBL mediante la API de DigDNS.
   - **HTTP & Headers (`--headers`)**: Inspecciona código de estado final, cadena de redirecciones (`301`/`302`/etc.), evaluación de cabeceras de seguridad (7 cabeceras clave) y listado completo de cabeceras de respuesta.
+  - **Geolocalización y ASN (`--geo` / `--geolocation`)**: Obtiene país, ciudad, zona horaria, coordenadas, número de Sistema Autónomo (`ASN`), organización e ISP asociado a la IP resuelta.
 - **Concurrencia y Resiliencia**: Procesamiento paralelo mediante `ThreadPoolExecutor` con barra de progreso (`tqdm`), soporte de transporte UDP o TCP (`--tcp`) y reintentos automáticos con *exponential backoff* (`-r`).
 - **Soporte IDN / Punycode y Validación**: Valida sintaxis de dominios (incluyendo caracteres internacionales como `eñe.es`), direcciones IP de nameservers y tipos de registro solicitados.
 - **Exportación a JSON (`-o`)**: Genera reportes estructurados listos para automatización o análisis posterior, creando y utilizando automáticamente la carpeta `output/` cuando no se indica una ruta con directorio.
@@ -34,6 +33,7 @@ net-digger/
 │   ├── email_security.py      # Evaluación de SPF, DMARC y DKIM
 │   ├── exporter.py            # Exportación de resultados a JSON y resolución de rutas en output/
 │   ├── formatters.py          # Renderizado estructurado de bloques en terminal
+│   ├── geo_inspector.py       # Inspección de geolocalización IP, coordenadas, ASN e ISP
 │   ├── http_inspector.py      # Inspección HTTP, cadena de redirecciones y cabeceras de seguridad
 │   ├── resolver.py            # Motor de consultas DNS (UDP/TCP, timeouts y reintentos)
 │   ├── ssl_inspector.py       # Auditoría de certificados TLS/SSL (puerto 443)
@@ -86,8 +86,9 @@ net-digger/
 | `--email` | Audita la configuración de autenticación de correo (`SPF`, `DMARC` y `DKIM`). | `False` |
 | `--blacklist` | Verifica la IP y el dominio objetivo en listas negras DNSBL y URIBL mediante la API de DigDNS. | `False` |
 | `--headers` | Inspecciona estado HTTP, cadena de redirecciones, cabeceras de seguridad y cabeceras completas. | `False` |
-| `--full` | Muestra valores íntegros sin truncar en tablas, SANs, estados WHOIS, registros SPF/DMARC y cabeceras. | `False` |
-| `--all` | Activa todos los módulos y salida completa (`-t ALL`, `--ssl`, `--whois`, `--email`, `--blacklist`, `--headers` y `--full`). | `False` |
+| `--geo`, `--geolocation` | Consulta geolocalización, coordenadas, zona horaria, ASN y organización de la IP objetivo. | `False` |
+| `--full` | Muestra valores íntegros sin truncar en tablas, SANs, estados WHOIS, registros SPF/DMARC, cabeceras y geolocalización. | `False` |
+| `--all` | Activa todos los módulos y salida completa (`-t ALL`, `--ssl`, `--whois`, `--email`, `--blacklist`, `--headers`, `--geo` y `--full`). | `False` |
 | `-o`, `--output` | Exporta los resultados a JSON. Si se usa `-o` sin nombre guarda en `output/<objetivo>.json`; si se da solo un nombre (`reporte.json`) usa `output/reporte.json`; si se da una ruta con carpeta respeta esa ruta. | `None` *(no exporta si se omite)* |
 
 ---
@@ -112,7 +113,7 @@ python digger.py google.com
   python digger.py google.com -t ALL
   ```
 
-### 3. Módulos Especializados (`--ssl`, `--whois`, `--email`, `--blacklist`, `--headers`)
+### 3. Módulos Especializados (`--ssl`, `--whois`, `--email`, `--blacklist`, `--headers`, `--geo`)
 Puedes ejecutar módulos de auditoría de forma independiente o combinada:
 * **Auditar seguridad de correo electrónico:**
   ```bash
@@ -122,13 +123,13 @@ Puedes ejecutar módulos de auditoría de forma independiente o combinada:
   ```bash
   python digger.py openai.com --ssl --whois
   ```
-* **Verificar reputación en listas negras (`--blacklist`) y cabeceras HTTP (`--headers`):**
+* **Verificar reputación en listas negras (`--blacklist`), cabeceras HTTP (`--headers`) y geolocalización/ASN (`--geo`):**
   ```bash
-  python digger.py google.com --blacklist --headers --full
+  python digger.py google.com --blacklist --headers --geo --full
   ```
 
 ### 4. Auditoría Integral con Salida Completa (`--all`)
-Ejecuta simultáneamente la consulta de todos los registros DNS (`ALL`), inspección SSL, WHOIS, seguridad de correo, blacklist, cabeceras HTTP y valores sin truncar (`--full`):
+Ejecuta simultáneamente la consulta de todos los registros DNS (`ALL`), inspección SSL, WHOIS, seguridad de correo, blacklist, cabeceras HTTP, geolocalización/ASN y valores sin truncar (`--full`):
 ```bash
 python digger.py google.com --all
 ```
@@ -186,6 +187,16 @@ python digger.py google.com --all
     Final URL       : http://www.google.com/
     Redirect Chain  : 301 http://google.com -> 200 http://www.google.com/
     Security Headers: 2/7
+
+--------------------------------------------------------------------------------
+[>] Geolocation & ASN
+    IP Address      : 142.251.34.78
+    Location        : Dallas, Texas, US
+    Timezone        : America/Chicago
+    Coordinates     : 37.751, -97.822
+    ASN             : AS15169
+    Organization    : Google LLC
+    ISP / Org       : AS15169 Google LLC
 ```
 
 ### 5. Auditoría Masiva Concurrente, TCP y Exportación a JSON
@@ -239,6 +250,16 @@ python digger.py -f dominios.txt -ns 8.8.8.8 -t ALL --tcp -r 3 -o reportes/audit
                 "present_count": 2,
                 "total_count": 7
             }
+        },
+        "geolocation": {
+            "status": "SUCCESS",
+            "ip": "142.251.34.78",
+            "location": "Dallas, Texas, US",
+            "timezone": "America/Chicago",
+            "coordinates": "37.751, -97.822",
+            "asn": "AS15169",
+            "organization": "Google LLC",
+            "isp_org": "AS15169 Google LLC"
         }
     }
 ]
