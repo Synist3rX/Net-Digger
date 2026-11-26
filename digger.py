@@ -19,7 +19,9 @@ from core.formatters import (
     format_geolocation_block,
     format_http_headers_block,
     format_reputation_block,
+    format_robots_block,
     format_security_score_block,
+    format_sitemap_block,
     format_ssl_block,
     format_target_header,
     format_whois_block,
@@ -28,7 +30,9 @@ from core.geo_inspector import inspect_geolocation as run_geolocation_inspection
 from core.http_inspector import inspect_http_headers
 from core.reputation_inspector import inspect_reputation as run_reputation_inspection
 from core.resolver import DNSResolverEngine
+from core.robots_inspector import inspect_robots as run_robots_inspection
 from core.security_score import inspect_security_score
+from core.sitemap_inspector import inspect_sitemap as run_sitemap_inspection
 from core.ssl_inspector import inspect_ssl_certificate
 from core.target_inspector import gather_target_metadata
 from core.validator import is_valid_domain, is_valid_ip
@@ -98,17 +102,17 @@ def load_domains_from_file(filepath: str) -> list[str]:
 
 
 def process_single_domain(
-    domain: str,
-    engine: DNSResolverEngine,
-    record_types: list[str],
-    show_dns_records: bool = False,
+    domain: str, engine: DNSResolverEngine, record_types: list[str],
+    inspect_dns_records: bool = False,
     inspect_blacklist: bool = False,
     inspect_dnssec: bool = False,
     inspect_email: bool = False,
     inspect_geolocation: bool = False,
     inspect_headers: bool = False,
     inspect_reputation: bool = False,
+    inspect_robots: bool = False,
     inspect_score: bool = False,
+    inspect_sitemap: bool = False,
     inspect_ssl: bool = False,
     inspect_whois: bool = False,
     full_output: bool = False,
@@ -127,7 +131,13 @@ def process_single_domain(
     mx_values = []
     first_a_record = None
 
-    if show_dns_records:
+    # Sección del Target siempre visible
+    target_meta = gather_target_metadata(domain, engine, candidate_ip=first_a_record, timeout=min(engine.resolver.timeout, 4.0))
+    domain_results["target"] = target_meta
+    output_lines = format_target_header(domain, target_meta)
+
+    # -t / --type | Sección de DNS Records solo cuando se solicita
+    if inspect_dns_records:
         for r_type in record_types:
             result = engine.query_record(domain, r_type)
             if not isinstance(result, dict):
@@ -159,64 +169,6 @@ def process_single_domain(
         if "MX" in [rt.upper() for rt in record_types]:
             domain_results["email_provider"] = detect_email_provider(mx_values)
 
-    target_meta = gather_target_metadata(
-        domain,
-        engine,
-        candidate_ip=first_a_record,
-        timeout=min(engine.resolver.timeout, 4.0),
-    )
-    domain_results["target"] = target_meta
-
-    blacklist_info = None
-    if inspect_blacklist:
-        blacklist_info = inspect_blacklist_block(
-            domain=domain,
-            engine=engine,
-            ip=target_meta.get("ip"),
-        )
-        domain_results["blacklist"] = blacklist_info
-    
-    http_headers_info = None
-    if inspect_headers:
-        http_headers_info = inspect_http_headers(
-            target=domain,
-            engine=engine,
-        )
-        domain_results["http_headers"] = http_headers_info
-
-    geolocation_info = None
-    if inspect_geolocation:
-        geolocation_info = run_geolocation_inspection(
-            ip=target_meta.get("ip"),
-            engine=engine,
-        )
-        domain_results["geolocation"] = geolocation_info
-
-    security_score_info = None
-    if inspect_score:
-        security_score_info = inspect_security_score(
-            target=domain,
-            engine=engine,
-            http_headers_info=http_headers_info,
-        )
-        domain_results["security_score"] = security_score_info
-
-    dnssec_info = None
-    if inspect_dnssec:
-        dnssec_info = run_dnssec_inspection(
-            domain=domain,
-            engine=engine,
-        )
-        domain_results["dnssec"] = dnssec_info
-
-    # reputation_info = None
-    # if inspect_reputation:
-
-    # Sección del target siempre visible
-    output_lines = format_target_header(domain, target_meta)
-
-    # Sección de DNS Records solo cuando se solicita -t / --type o --all
-    if show_dns_records:
         output_lines.extend(
             format_dns_records_block(
                 table_rows=table_rows,
@@ -228,45 +180,79 @@ def process_single_domain(
             )
         )
 
+    # --ssl
     if inspect_ssl:
         ssl_info = inspect_ssl_certificate(domain, timeout=engine.resolver.timeout)
         domain_results["ssl_certificate"] = ssl_info
         output_lines.extend(format_ssl_block(ssl_info, full_output=full_output))
 
+    # --whois
     if inspect_whois:
         whois_info = run_whois_inspection(domain, timeout=engine.resolver.timeout)
         domain_results["whois"] = whois_info
         output_lines.extend(format_whois_block(whois_info, full_output=full_output))
 
+    # --email
     if inspect_email:
         email_info = inspect_email_security(domain, engine)
         domain_results["email_security"] = email_info
         output_lines.extend(format_email_security_block(email_info, full_output=full_output))
 
+    # --blacklist
     if inspect_blacklist:
+        blacklist_info = inspect_blacklist_block(domain=domain, engine=engine, ip=target_meta.get("ip"))
+        domain_results["blacklist"] = blacklist_info
         output_lines.extend(format_blacklist_block(blacklist_info=blacklist_info, full_output=full_output))
 
-    if inspect_headers:
-        output_lines.extend(format_http_headers_block(http_info=http_headers_info, full_output=full_output))
+    # --headers
+    http_headers_info = None
+    if inspect_headers or inspect_score:
+        http_headers_info = inspect_http_headers(target=domain, engine=engine)
+        if inspect_headers:
+            domain_results["http_headers"] = http_headers_info
+            output_lines.extend(format_http_headers_block(http_info=http_headers_info, full_output=full_output))
 
-    if inspect_geolocation:
-        output_lines.extend(format_geolocation_block(geo_info=geolocation_info, full_output=full_output))
+    # --geo / --geolocation
+    geolocation_info = None
+    if inspect_geolocation or inspect_reputation:
+        geolocation_info = run_geolocation_inspection(ip=target_meta.get("ip"), engine=engine)
+        if inspect_geolocation:
+            domain_results["geolocation"] = geolocation_info
+            output_lines.extend(format_geolocation_block(geo_info=geolocation_info, full_output=full_output))
 
+    # --score / --security-score
     if inspect_score:
+        security_score_info = inspect_security_score(target=domain, engine=engine, http_headers_info=http_headers_info)
+        domain_results["security_score"] = security_score_info
         output_lines.extend(format_security_score_block(security_score_info=security_score_info, full_output=full_output))
 
+    # --reputation
     if inspect_reputation:
-        reputation_info = run_reputation_inspection(
-            ip=target_meta.get("ip"),
-            engine=engine,
-            geolocation_info=geolocation_info,
-        )
+        reputation_info = run_reputation_inspection(ip=target_meta.get("ip"), engine=engine, geolocation_info=geolocation_info)
         domain_results["reputation"] = reputation_info
         output_lines.extend(format_reputation_block(reputation_info=reputation_info, full_output=full_output))
 
+    # --dnssec
     if inspect_dnssec:
+        dnssec_info = run_dnssec_inspection(domain=domain, engine=engine)
+        domain_results["dnssec"] = dnssec_info
         output_lines.extend(format_dnssec_block(dnssec_info=dnssec_info, full_output=full_output))
 
+    # --robots
+    robots_info = None
+    if inspect_robots or inspect_sitemap:
+        robots_info = run_robots_inspection(domain=domain, engine=engine)
+        if inspect_robots:
+            domain_results["robots"] = robots_info
+            output_lines.extend(format_robots_block(robots_info=robots_info, full_output=full_output))
+
+    # --sitemap
+    if inspect_sitemap:
+        sitemap_info = run_sitemap_inspection(domain=domain, engine=engine, robots_info=robots_info)
+        domain_results["sitemap"] = sitemap_info
+        output_lines.extend(format_sitemap_block(sitemap_info=sitemap_info, full_output=full_output))
+
+    # Output Lines
     output_lines.append("\n" + "-"*80)
     tqdm.write("\n".join(output_lines))
     return domain_results

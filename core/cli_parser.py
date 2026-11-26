@@ -131,13 +131,23 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         help="Inspect DNSSEC status, DNSKEY/DS records, and Authenticated Data (AD) flag",
     )
     parser.add_argument(
+        "--robots",
+        action="store_true",
+        help="Fetch and parse robots.txt directives and sitemap URLs for the target domain",
+    )
+    parser.add_argument(
+        "--sitemap",
+        action="store_true",
+        help="Fetch and parse XML sitemap index or URL entries for the target domain",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         help=(
             "Enable all inspection modules and full output "
-            "(--type ALL, --ssl, --whois, --email, --blacklist,"
-            " --headers, --geolocation, --security-score,"
-            " --reputation, --dnssec and --full)"
+            "(--type ALL, --ssl, --whois, --email, --blacklist, --headers,"
+            " --geolocation, --security-score, --reputation, --dnssec,"
+            " --robots, --sitemap and --full)"
         ),
     )
 

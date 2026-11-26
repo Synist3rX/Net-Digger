@@ -1,4 +1,4 @@
-# Net Digger 🔍 (`v1.14.0`)
+# Net Digger 🔍 (`v1.15.0`)
 
 > Una herramienta CLI de Python robusta, modular y de alto rendimiento para reconocimiento de dominios, consultas DNS avanzadas y auditoría de infraestructura de red.
 
@@ -30,6 +30,10 @@
 
   * **DNSSEC (`--dnssec`)**: Audita la postura criptográfica del dominio verificando registros `DNSKEY`, `DS` y el indicador `Authenticated Data` (`AD`).
 
+  * **Robots (`--robots`)**: Descarga y analiza `/robots.txt` extrayendo `User-agent`, conteo de reglas `Allow` / `Disallow` y directivas `Sitemap` declaradas.
+
+  * **Sitemap (`--sitemap`)**: Inspecciona índices de sitemaps (`<sitemapindex>`) o conjuntos de URLs (`<urlset>`) descubiertos desde `robots.txt` o rutas estándar (`/sitemap.xml`, `/sitemap_index.xml`).
+
 * **Concurrencia y Resiliencia**: Procesamiento paralelo mediante `ThreadPoolExecutor` con barra de progreso (`tqdm`), soporte de transporte UDP o TCP (`--tcp`) y reintentos automáticos con *exponential backoff* (`-r`).
 
 * **Soporte IDN / Punycode y Validación**: Valida sintaxis de dominios (incluyendo caracteres internacionales como `eñe.es`), direcciones IP de nameservers y tipos de registro solicitados.
@@ -53,7 +57,9 @@ net-digger/
 │   ├── http_inspector.py       # Inspección HTTP, cadena de redirecciones y cabeceras de seguridad
 │   ├── reputation_inspector.py # Consulta de reputación IP y reportes de abuso (DigDNS API)
 │   ├── resolver.py             # Motor de consultas DNS (UDP/TCP, timeouts y reintentos)
+│   ├── robots_inspector.py     # Descarga y parseo de directivas en robots.txt
 │   ├── security_score.py       # Evaluación ponderada y calificación (A–F) de cabeceras de seguridad HTTP
+│   ├── sitemap_inspector.py    # Descubrimiento y parseo XML de sitemaps (<sitemapindex> y <urlset>)
 │   ├── ssl_inspector.py        # Auditoría de certificados TLS/SSL (puerto 443)
 │   ├── target_inspector.py     # Resolución inicial de objetivo (IP, PTR y HTTP Status)
 │   ├── validator.py            # Validación de dominios (IDN) e IPs
@@ -107,8 +113,10 @@ net-digger/
 | `--score`, `--security-score` | Evalúa el puntaje de cabeceras de seguridad HTTP (sobre 95 puntos) y asigna una calificación (`A`–`F`). | `False` |
 | `--reputation` | Consulta reputación IP, puntaje de abuso, reportes, ISP, tipo de uso y estado en lista blanca. | `False` |
 | `--dnssec` | Inspecciona estado DNSSEC, registros `DNSKEY` y `DS`, y el flag `Authenticated Data` (`AD`). | `False` |
-| `--full` | Muestra valores íntegros sin truncar en tablas, SANs, estados WHOIS, registros SPF/DMARC, cabeceras y reportes. | `False` |
-| `--all` | Activa todos los módulos de inspección y salida completa (`-t ALL`, `--ssl`, `--whois`, `--email`, `--blacklist`, `--headers`, `--geo`, `--score`, `--reputation`, `--dnssec` y `--full`). | `False` |
+| `--robots` | Descarga y analiza `/robots.txt` (`User-agent`, reglas `Allow`/`Disallow` y directivas `Sitemap`). | `False` |
+| `--sitemap` | Inspecciona y extrae las URLs de sitemaps XML (`<sitemapindex>` o `<urlset>`). | `False` |
+| `--full` | Muestra valores íntegros sin truncar en tablas, SANs, estados WHOIS, registros SPF/DMARC, cabeceras, `robots.txt` y sitemaps. | `False` |
+| `--all` | Activa todos los módulos de inspección y salida completa (`-t ALL`, `--ssl`, `--whois`, `--email`, `--blacklist`, `--headers`, `--geo`, `--score`, `--reputation`, `--dnssec`, `--robots`, `--sitemap` y `--full`). | `False` |
 | `-o`, `--output` | Exporta los resultados a JSON. Si se usa `-o` sin nombre guarda en `output/<objetivo>.json`; si se da solo un nombre (`reporte.json`) usa `output/reporte.json`; si se da una ruta con carpeta respeta esa ruta. | `None` *(no exporta si se omite)* |
 
 ## Ejemplos de Uso
@@ -137,7 +145,7 @@ python digger.py google.com
   python digger.py google.com -t ALL
   ```
 
-### 3. Módulos Especializados (`--ssl`, `--whois`, `--email`, `--blacklist`, `--headers`, `--geo`, `--score`, `--reputation`, `--dnssec`)
+### 3. Módulos Especializados (`--ssl`, `--whois`, `--email`, `--blacklist`, `--headers`, `--geo`, `--score`, `--reputation`, `--dnssec`, `--robots`, `--sitemap`)
 
 Puedes ejecutar módulos de auditoría de forma independiente o combinada:
 
@@ -153,10 +161,10 @@ Puedes ejecutar módulos de auditoría de forma independiente o combinada:
   python digger.py openai.com --ssl --whois
   ```
 
-* **Verificar reputación IP (`--reputation`), estado DNSSEC (`--dnssec`) y geolocalización/ASN (`--geo`):**
+* **Analizar `robots.txt` y sitemaps XML por separado o juntos:**
 
   ```bash
-  python digger.py google.com --reputation --dnssec --geo
+  python digger.py google.com --robots --sitemap
   ```
 
 ### 4. Auditoría Integral con Salida Completa (`--all`)
@@ -261,6 +269,27 @@ python digger.py google.com --all
     DNSKEY record   : Not found
     DS record       : Not found
     Authenticated Data: No
+
+--------------------------------------------------------------------------------
+[>] Robots
+    Source URL      : https://google.com/robots.txt
+    Lines           : 301
+    Rules           : Allow: 48 | Disallow: 220 | Sitemaps: 1
+    ------------------------------------------------------------------------
+        User-agent: *
+        Disallow: /search
+        Allow: /search/about
+        ...
+
+--------------------------------------------------------------------------------
+[>] Sitemap
+    Sitemap URL     : https://www.google.com/sitemap.xml
+    Type            : sitemapindex
+    URLs Found      : 24
+    ------------------------------------------------------------------------
+        https://www.google.com/gmail/sitemap.xml
+        https://www.google.com/forms/sitemaps.xml
+        ...
 ```
 
 ### 5. Auditoría Masiva Concurrente, TCP y Exportación a JSON
@@ -355,6 +384,27 @@ python digger.py -f dominios.txt -ns 8.8.8.8 -t ALL --tcp -r 3 -o reportes/audit
             "dnskey_record": false,
             "ds_record": false,
             "authenticated_data": false
+        },
+        "robots": {
+            "status": "SUCCESS",
+            "domain": "google.com",
+            "url": "https://google.com/robots.txt",
+            "line_count": 301,
+            "allow_count": 48,
+            "disallow_count": 220,
+            "sitemaps": [
+                "https://www.google.com/sitemap.xml"
+            ]
+        },
+        "sitemap": {
+            "status": "SUCCESS",
+            "domain": "google.com",
+            "sitemap_url": "https://www.google.com/sitemap.xml",
+            "kind": "sitemapindex",
+            "url_count": 24,
+            "urls": [
+                "https://www.google.com/gmail/sitemap.xml"
+            ]
         }
     }
 ]

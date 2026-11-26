@@ -53,7 +53,7 @@ def test_process_single_domain_visibility_and_dns_count():
         patch("digger.gather_target_metadata", return_value=fake_target),
         patch("digger.tqdm.write") as mock_write,
     ):
-        process_single_domain("example.com", engine, [], show_dns_records=False)
+        process_single_domain("example.com", engine, [], inspect_dns_records=False)
         only_target = mock_write.call_args[0][0]
         assert "[>] Target: example.com" in only_target
         assert "Resolves To     : 93.184.216.34 (edge.example.com)" in only_target
@@ -61,7 +61,7 @@ def test_process_single_domain_visibility_and_dns_count():
         assert "[>] DNS Records" not in only_target
         assert "records found" not in only_target
 
-        process_single_domain("example.com", engine, ["A"], show_dns_records=True)
+        process_single_domain("example.com", engine, ["A"], inspect_dns_records=True)
         with_dns = mock_write.call_args[0][0]
         assert "[>] Target: example.com" in with_dns
         assert "records found" not in with_dns.splitlines()[1]
@@ -153,7 +153,7 @@ def test_process_single_domain_runs_blacklist_module():
             domain="example.com",
             engine=engine,
             record_types=[],
-            show_dns_records=False,
+            inspect_dns_records=False,
             inspect_blacklist=True,
             full_output=False,
         )
@@ -213,7 +213,7 @@ def test_process_single_domain_runs_blacklist_and_headers():
             domain="google.com",
             engine=engine,
             record_types=[],
-            show_dns_records=False,
+            inspect_dns_records=False,
             inspect_blacklist=True,
             inspect_headers=True,
             full_output=False,
@@ -266,7 +266,7 @@ def test_process_single_domain_runs_geolocation():
             domain="google.com",
             engine=engine,
             record_types=[],
-            show_dns_records=False,
+            inspect_dns_records=False,
             inspect_geolocation=True,
             full_output=False,
         )
@@ -307,7 +307,7 @@ def test_process_single_domain_runs_security_score():
             domain="example.com",
             engine=engine,
             record_types=[],
-            show_dns_records=False,
+            inspect_dns_records=False,
             inspect_score=True,
             full_output=False,
         )
@@ -362,7 +362,7 @@ def test_process_single_domain_runs_reputation_and_dnssec():
             domain="google.com",
             engine=engine,
             record_types=[],
-            show_dns_records=False,
+            inspect_dns_records=False,
             inspect_reputation=True,
             inspect_dnssec=True,
             full_output=False,
@@ -376,3 +376,63 @@ def test_process_single_domain_runs_reputation_and_dnssec():
     assert "[>] DNSSEC" in rendered
     assert res["reputation"] == fake_reputation
     assert res["dnssec"] == fake_dnssec
+
+
+def test_process_single_domain_runs_robots_and_sitemap_separately():
+    engine = MagicMock()
+    engine.resolver.timeout = 5.0
+
+    fake_target = {
+        "query": "example.com",
+        "ip": "93.184.216.34",
+        "ptr": None,
+        "resolves_to": "93.184.216.34",
+        "http_status": 200,
+    }
+    fake_robots = {
+        "status": "SUCCESS",
+        "domain": "example.com",
+        "url": "https://example.com/robots.txt",
+        "line_count": 2,
+        "allow_count": 0,
+        "disallow_count": 1,
+        "sitemaps": ["https://example.com/sitemap.xml"],
+        "lines": ["User-agent: *", "Disallow: /admin"],
+    }
+    fake_sitemap = {
+        "status": "SUCCESS",
+        "domain": "example.com",
+        "sitemap_url": "https://example.com/sitemap.xml",
+        "kind": "urlset",
+        "url_count": 1,
+        "urls": ["https://example.com/"],
+    }
+
+    with (
+        patch("digger.gather_target_metadata", return_value=fake_target),
+        patch("digger.run_robots_inspection", return_value=fake_robots) as mock_robots,
+        patch("digger.run_sitemap_inspection", return_value=fake_sitemap) as mock_sitemap,
+        patch("digger.tqdm.write") as mock_write,
+    ):
+        res = process_single_domain(
+            domain="example.com",
+            engine=engine,
+            record_types=[],
+            inspect_dns_records=False,
+            inspect_robots=False,
+            inspect_sitemap=True,
+            full_output=False,
+        )
+
+    mock_robots.assert_called_once_with(domain="example.com", engine=engine)
+    mock_sitemap.assert_called_once_with(
+        domain="example.com",
+        engine=engine,
+        robots_info=fake_robots,
+    )
+
+    rendered = mock_write.call_args[0][0]
+    assert "[>] Robots" not in rendered
+    assert "[>] Sitemap" in rendered
+    assert "robots" not in res
+    assert res["sitemap"] == fake_sitemap

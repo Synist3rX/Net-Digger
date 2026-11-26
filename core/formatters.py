@@ -438,3 +438,73 @@ def format_dnssec_block(
     lines.append(f"    {'Authenticated Data':<16}: {ad_str}")
 
     return lines
+
+
+def format_robots_block(
+    robots_info: dict | None,
+    full_output: bool = False,
+) -> list[str]:
+    lines = [SECTION_DIVIDER, "[>] Robots"]
+
+    if not isinstance(robots_info, dict):
+        lines.append("    [-] Robots inspection returned no data.")
+        return lines
+
+    status = robots_info.get("status")
+    if status != "SUCCESS":
+        marker = "[*]" if status == "NOT_FOUND" else "[-]"
+        lines.append(f"    {marker} {robots_info.get('message', 'Unable to fetch robots.txt')}")
+        return lines
+
+    lines.append(f"    {'Source URL':<16}: {robots_info.get('url', 'N/A')}")
+    lines.append(f"    {'Lines':<16}: {robots_info.get('line_count', 0)}")
+    lines.append(
+        f"    {'Rules':<16}: Allow: {robots_info.get('allow_count', 0)} | "
+        f"Disallow: {robots_info.get('disallow_count', 0)} | "
+        f"Sitemaps: {len(robots_info.get('sitemaps') or [])}"
+    )
+
+    raw_lines = robots_info.get("lines") or []
+    if raw_lines:
+        lines.append(INDENTED_DIVIDER)
+        preview_limit = len(raw_lines) if full_output else 15
+        for entry in raw_lines[:preview_limit]:
+            lines.append(f"        {entry}")
+        remaining = len(raw_lines) - preview_limit
+        if remaining > 0:
+            lines.append(f"        ... ({remaining} more lines; use --full to view all)")
+
+    return lines
+
+
+def format_sitemap_block(
+    sitemap_info: dict | None,
+    full_output: bool = False,
+) -> list[str]:
+    lines = [SECTION_DIVIDER, "[>] Sitemap"]
+
+    if not isinstance(sitemap_info, dict):
+        lines.append("    [-] Sitemap inspection returned no data.")
+        return lines
+
+    status = sitemap_info.get("status")
+    if status != "SUCCESS":
+        marker = "[*]" if status == "NOT_FOUND" else "[-]"
+        lines.append(f"    {marker} {sitemap_info.get('message', 'Unable to fetch sitemap')}")
+        return lines
+
+    urls = sitemap_info.get("urls") or []
+    lines.append(f"    {'Sitemap URL':<16}: {sitemap_info.get('sitemap_url', 'N/A')}")
+    lines.append(f"    {'Type':<16}: {sitemap_info.get('kind', 'unknown')}")
+    lines.append(f"    {'URLs Found':<16}: {sitemap_info.get('url_count', len(urls))}")
+
+    if urls:
+        lines.append(INDENTED_DIVIDER)
+        limit = len(urls) if full_output else 10
+        for u in urls[:limit]:
+            lines.append(f"        {u}")
+        extra = len(urls) - limit
+        if extra > 0:
+            lines.append(f"        ... ({extra} more URLs; use --full to view all)")
+
+    return lines
