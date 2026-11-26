@@ -121,6 +121,7 @@ def test_main_rejects_missing_target(monkeypatch, capsys):
     assert exc.value.code == 1
     assert "must specify" in capsys.readouterr().out.lower()
 
+
 def test_process_single_domain_runs_blacklist_module():
     engine = MagicMock()
     engine.resolver.timeout = 3.0
@@ -163,6 +164,7 @@ def test_process_single_domain_runs_blacklist_module():
     assert "Overall         : Clean" in rendered
     assert "Clean: 13/13" in rendered
     assert res["blacklist"] == fake_blacklist
+
 
 def test_process_single_domain_runs_blacklist_and_headers():
     engine = MagicMock()
@@ -274,3 +276,44 @@ def test_process_single_domain_runs_geolocation():
     assert "[>] Geolocation & ASN" in rendered
     assert "ASN             : AS15169" in rendered
     assert res["geolocation"] == fake_geo
+
+
+def test_process_single_domain_runs_security_score():
+    engine = MagicMock()
+    engine.resolver.timeout = 5.0
+
+    fake_target = {
+        "query": "example.com",
+        "ip": "93.184.216.34",
+        "ptr": None,
+        "resolves_to": "93.184.216.34",
+        "http_status": 200,
+    }
+    fake_score = {
+        "status": "SUCCESS",
+        "category": "HTTP Security Headers",
+        "score": 15,
+        "max_score": 95,
+        "grade": "F",
+        "checks": [],
+    }
+
+    with (
+        patch("digger.gather_target_metadata", return_value=fake_target),
+        patch("digger.inspect_security_score", return_value=fake_score) as mock_score,
+        patch("digger.tqdm.write") as mock_write,
+    ):
+        res = process_single_domain(
+            domain="example.com",
+            engine=engine,
+            record_types=[],
+            show_dns_records=False,
+            inspect_score=True,
+            full_output=False,
+        )
+
+    mock_score.assert_called_once()
+    rendered = mock_write.call_args[0][0]
+    assert "[>] Security Score" in rendered
+    assert "Grade           : F" in rendered
+    assert res["security_score"] == fake_score

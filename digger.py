@@ -15,6 +15,7 @@ from core.formatters import (
     format_email_security_block,
     format_geolocation_block,
     format_http_headers_block,
+    format_security_score_block,
     format_ssl_block,
     format_target_header,
     format_whois_block,
@@ -22,10 +23,11 @@ from core.formatters import (
 from core.geo_inspector import inspect_geolocation as run_geolocation_inspection
 from core.http_inspector import inspect_http_headers
 from core.resolver import DNSResolverEngine
+from core.security_score import inspect_security_score
 from core.ssl_inspector import inspect_ssl_certificate
 from core.target_inspector import gather_target_metadata
 from core.validator import is_valid_domain, is_valid_ip
-from core.whois_inspector import inspect_whois
+from core.whois_inspector import inspect_whois as run_whois_inspection
 
 
 SUPPORTED_RECORD_TYPES = (
@@ -131,9 +133,16 @@ def parse_arguments():
         help="Inspect IP geolocation and ASN information for the target domain",
     )
     parser.add_argument(
+        "--score",
+        "--security-score",
+        dest="security_score",
+        action="store_true",
+        help="Evaluate HTTP security headers score and letter grade",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
-        help="Enable all inspection modules and full output (-t ALL, --ssl, --whois, --email, --blacklist, --headers, --geolocation and --full)"
+        help="Enable all inspection modules and full output (-t ALL, --ssl, --whois, --email, --blacklist, --headers, --geolocation, --security-score and --full)"
     )
 
     return parser.parse_args()
@@ -200,8 +209,9 @@ def process_single_domain(
     inspect_email: bool = False,
     inspect_geolocation: bool = False,
     inspect_headers: bool = False,
+    inspect_score: bool = False,
     inspect_ssl: bool = False,
-    inspect_whois_flag: bool = False,
+    inspect_whois: bool = False,
     full_output: bool = False,
 ) -> dict:
     domain_results = {
@@ -283,6 +293,15 @@ def process_single_domain(
         )
         domain_results["geolocation"] = geolocation_info
 
+    security_score_info = None
+    if inspect_score:
+        security_score_info = inspect_security_score(
+            target=domain,
+            engine=engine,
+            http_headers_info=http_headers_info,
+        )
+        domain_results["security_score"] = security_score_info
+
     # Sección del target siempre visible
     output_lines = format_target_header(domain, target_meta)
 
@@ -304,8 +323,8 @@ def process_single_domain(
         domain_results["ssl_certificate"] = ssl_info
         output_lines.extend(format_ssl_block(ssl_info, full_output=full_output))
 
-    if inspect_whois_flag:
-        whois_info = inspect_whois(domain, timeout=engine.resolver.timeout)
+    if inspect_whois:
+        whois_info = run_whois_inspection(domain, timeout=engine.resolver.timeout)
         domain_results["whois"] = whois_info
         output_lines.extend(format_whois_block(whois_info, full_output=full_output))
 
@@ -334,6 +353,14 @@ def process_single_domain(
         output_lines.extend(
             format_geolocation_block(
                 geo_info=geolocation_info,
+                full_output=full_output,
+            )
+        )
+
+    if inspect_score:
+        output_lines.extend(
+            format_security_score_block(
+                security_score_info=security_score_info,
                 full_output=full_output,
             )
         )
@@ -374,6 +401,7 @@ def main():
     args.email = args.email or args.all
     args.geolocation = args.geolocation or args.all
     args.headers = args.headers or args.all
+    args.security_score = args.security_score or args.all
     args.ssl = args.ssl or args.all
     args.whois = args.whois or args.all
     args.full = args.full or args.all
@@ -426,6 +454,7 @@ def main():
                 args.email,
                 args.geolocation,
                 args.headers,
+                args.security_score,
                 args.ssl,
                 args.whois,
                 args.full,

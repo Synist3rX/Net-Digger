@@ -332,3 +332,43 @@ def format_geolocation_block(
     lines.append(f"    {'ISP / Org':<16}: {geo_info.get('isp_org', 'Unknown')}")
 
     return lines
+
+
+def format_security_score_block(
+    security_score_info: dict | None,
+    full_output: bool = False,
+) -> list[str]:
+    lines = [SECTION_DIVIDER, "[>] Security Score"]
+
+    if not isinstance(security_score_info, dict):
+        lines.append("    [-] Security score returned no data.")
+        return lines
+
+    if security_score_info.get("status") != "SUCCESS":
+        lines.append(f"    [-] {security_score_info.get('message', 'Unknown security score error')}")
+        return lines
+
+    grade = security_score_info.get("grade", "F")
+    score = security_score_info.get("score", 0)
+    max_score = security_score_info.get("max_score", 95)
+    category = security_score_info.get("category", "HTTP Security Headers")
+
+    lines.append(f"    {'Grade':<16}: {grade}")
+    lines.append(f"    {'Category':<16}: {category}")
+    lines.append(f"    {'Points':<16}: {score} / {max_score} points")
+
+    checks = security_score_info.get("checks") or []
+    if checks:
+        lines.append(INDENTED_DIVIDER)
+        for item in checks:
+            present = bool(item.get("present"))
+            mark = "[✔]" if present else "[✖]"
+            label = str(item.get("label", ""))
+            pts = item.get("points", 0)
+            max_pts = item.get("max_points", 0)
+            status_text = str(item.get("status_text", ""))
+            if not full_output and len(status_text) > 44:
+                status_text = status_text[:41] + "..."
+            lines.append(f"        {mark} {label:<22} {status_text:<44} {pts}/{max_pts}")
+
+    return lines
