@@ -11,6 +11,13 @@ from tqdm import tqdm
 from core.detector import detect_dns_provider, detect_email_provider
 from core.email_security import inspect_email_security
 from core.exporter import export_to_json
+from core.formatters import (
+    format_dns_records_block,
+    format_email_security_block,
+    format_ssl_block,
+    format_target_header,
+    format_whois_block,
+)
 from core.resolver import DNSResolverEngine
 from core.ssl_inspector import inspect_ssl_certificate
 from core.target_inspector import gather_target_metadata
@@ -39,8 +46,10 @@ def parse_arguments():
     parser.add_argument(
         "-t", "--type",
         dest="record_type",
+        nargs="?",
+        const="ALL",
         default=None,
-        help="DNS record type (A, AAAA, MX, NS, TXT, CNAME, SOA, CAA, SRV, PTR, HTTPS, SVCB, ALL)"
+        help="DNS record type (A, AAAA, MX, NS, TXT, CNAME, SOA, CAA, SRV, PTR, HTTPS, SVCB, ALL). Defaults to ALL when -t is passed without value"
     )
     parser.add_argument(
         "-ns",
@@ -117,149 +126,6 @@ def load_domains_from_file(filepath: str) -> list[str]:
     return domains
 
 
-def format_target_header(domain: str, target_meta: dict) -> list[str]:
-    return [
-        f"\n[>] Target: {domain}",
-        f"    {'Query':<16}: {target_meta.get('query', domain)}",
-        f"    {'Resolves To':<16}: {target_meta.get('resolves_to', 'N/A')}",
-        f"    {'HTTP Status':<16}: {target_meta.get('http_status', 'N/A')}",
-    ]
-
-
-def format_ssl_block(ssl_info: dict, full_output: bool = False) -> list[str]:
-    lines = [SECTION_DIVIDER, "[>] SSL Certificate"]
-
-    if not isinstance(ssl_info, dict):
-        lines.append("    [-] SSL inspection returned no data (None).")
-        return lines
-
-    if ssl_info.get("status") != "SUCCESS":
-        lines.append(f"    [-] {ssl_info.get('message', 'Unknown SSL error')}")
-        return lines
-
-    days = ssl_info["days_remaining"]
-    badge = f"{days}d left" if days is not None else "N/A"
-    covered_str = "Yes" if ssl_info["domain_included"] else "No"
-    self_signed_str = "Yes" if ssl_info["is_self_signed"] else "No"
-
-    lines.append(f"    {'Status':<16}: {badge} (TLS: {ssl_info.get('tls_version') or 'N/A'})")
-    lines.append(f"    {'Common Name':<16}: {ssl_info['common_name']}")
-    lines.append(f"    {'Issuer':<16}: {ssl_info['issuer']}")
-    lines.append(f"    {'Valid From':<16}: {ssl_info['valid_from']}")
-    lines.append(f"    {'Expires':<16}: {ssl_info['expires']}")
-    lines.append(f"    {'Days Remaining':<16}: {days if days is not None else 'N/A'}")
-    lines.append(f"    {'Domain Included':<16}: {covered_str}")
-    lines.append(f"    {'Self-Signed':<16}: {self_signed_str}")
-
-    sans = ssl_info.get("sans", [])
-    if sans:
-        if full_output or len(sans) <= 6:
-            sans_display = " ".join(sans)
-        else:
-            preview = " ".join(sans[:6])
-            remaining = len(sans) - 6
-            sans_display = f"{preview} +{remaining} more"
-        label = f"SANs ({len(sans)})"
-        lines.append(f"    {label:<16}: {sans_display}")
-    else:
-        lines.append(f"    {'SANs (0)':<16}: None")
-
-    return lines
-
-
-def format_whois_block(whois_info: dict | None, full_output: bool = False) -> list[str]:
-    lines = [SECTION_DIVIDER, "[>] WHOIS"]
-
-    if not isinstance(whois_info, dict):
-        lines.append("    [-] WHOIS inspection returned no data.")
-        return lines
-
-    if whois_info.get("status") != "SUCCESS":
-        lines.append(f"    [-] {whois_info.get('message', 'Unknown WHOIS error')}")
-        return lines
-
-    years_ago = whois_info.get("years_ago")
-    registered_str = whois_info.get("registered", "N/A")
-    if years_ago is not None and registered_str != "N/A":
-        registered_str = f"{registered_str} ({years_ago} years ago)"
-
-    term_years = whois_info.get("term_years")
-    term_str = f"{term_years} years" if term_years is not None else "N/A"
-
-    ns_list = whois_info.get("nameservers", [])
-    ns_str = " ".join(ns_list) if ns_list else "None"
-
-    statuses = whois_info.get("statuses", [])
-    if statuses:
-        if full_output or len(statuses) <= 6:
-            status_str = ", ".join(statuses)
-        else:
-            status_str = ", ".join(statuses[:6]) + f" +{len(statuses) - 6} more"
-    else:
-        status_str = "None"
-
-    lines.append(f"    {'Domain':<16}: {whois_info.get('domain', 'N/A')}")
-    lines.append(f"    {'Registrar':<16}: {whois_info.get('registrar', 'N/A')}")
-    lines.append(f"    {'Registrar URL':<16}: {whois_info.get('registrar_url', 'N/A')}")
-    lines.append(f"    {'Country':<16}: {whois_info.get('country', 'N/A')}")
-    lines.append(f"    {'DNSSEC':<16}: {whois_info.get('dnssec', 'unsigned')}")
-    lines.append(f"    {'Registered':<16}: {registered_str}")
-    lines.append(f"    {'Term':<16}: {term_str}")
-    lines.append(f"    {'Updated':<16}: {whois_info.get('updated', 'N/A')}")
-    lines.append(f"    {'Expires':<16}: {whois_info.get('expires', 'N/A')}")
-    lines.append(f"    {'Nameservers':<16}: {ns_str}")
-    lines.append(f"    {'Status':<16}: {status_str}")
-
-    return lines
-
-
-def format_email_security_block(email_info: dict | None, full_output: bool = False) -> list[str]:
-    lines = [SECTION_DIVIDER, "[>] Email Security"]
-
-    if not isinstance(email_info, dict):
-        lines.append("    [-] Email security inspection returned no data.")
-        return lines
-
-    if email_info.get("status") != "SUCCESS":
-        lines.append(f"    [-] {email_info.get('message', 'Unknown email security error')}")
-        return lines
-
-    lines.append(f"    {'Overall':<16}: {email_info.get('overall_status', 'Partial')}")
-
-    # SPF
-    spf = email_info.get("spf", {})
-    spf_status = spf.get("status", "Missing")
-    spf_lookups = f"{spf.get('lookups', 0)}/{spf.get('max_lookups', 10)} lookups"
-    lines.append(f"    {'SPF':<16}: {spf_status} ({spf_lookups})")
-    if spf.get("record"):
-        rec = spf["record"]
-        if not full_output and len(rec) > INTERN_SEPARATOR_WIDTH:
-            rec = rec[:69] + "..."
-        lines.append(f"    {'SPF Record':<16}: {rec}")
-
-    # DMARC
-    dmarc = email_info.get("dmarc", {})
-    if dmarc.get("found"):
-        pol = dmarc.get("policy", "none")
-        reports = f"Reports: {dmarc['reports']}" if dmarc.get("reports") else "Reports: None"
-        lines.append(f"    {'DMARC':<16}: {pol} ({reports})")
-        if dmarc.get("record"):
-            drec = dmarc["record"]
-            if not full_output and len(drec) > INTERN_SEPARATOR_WIDTH:
-                drec = drec[:69] + "..."
-            lines.append(f"    {'DMARC Record':<16}: {drec}")
-    else:
-        lines.append(f"    {'DMARC':<16}: Missing")
-
-    # DKIM
-    dkim = email_info.get("dkim", {})
-    dkim_status = dkim.get("status", "Not detected")
-    dkim_detail = dkim.get("detail", "No selectors found from common list")
-    lines.append(f"    {'DKIM':<16}: {dkim_status} ({dkim_detail})")
-
-    return lines
-
-
 def process_single_domain(
     domain: str,
     engine: DNSResolverEngine,
@@ -329,25 +195,16 @@ def process_single_domain(
 
     # Sección de DNS Records solo cuando se solicita -t / --type o --all
     if show_dns_records:
-        output_lines.append(SECTION_DIVIDER)
-        output_lines.append(f"[>] DNS Records ({domain_results['total_records']} records found)")
-        if table_rows:
-            output_lines.append(f"    {'TYPE':<8} {'PRIO':<6} {'TTL':<8} {'VALUE'}")
-            output_lines.append(INDENTED_DIVIDER)
-            for r_type, val, prio, ttl in table_rows:
-                prio_display = prio if prio else "-"
-                if full_output or len(val) <= 60:
-                    display_val = val
-                else:
-                    display_val = val[:57] + "..."
-                output_lines.append(f"    {r_type:<8} {prio_display:<6} {ttl:<8} {display_val}")
-        else:
-            output_lines.append("    [-] No DNS records retrieved for the requested type(s).")
-
-        if "NS" in [rt.upper() for rt in record_types]:
-            output_lines.append(f"    [*] DNS Provider   : {domain_results['dns_provider']} (detected via NS)")
-        if "MX" in [rt.upper() for rt in record_types]:
-            output_lines.append(f"    [*] Email Provider : {domain_results['email_provider']} (detected via MX)")
+        output_lines.extend(
+            format_dns_records_block(
+                table_rows=table_rows,
+                total_records=domain_results["total_records"],
+                record_types=record_types,
+                dns_provider=domain_results["dns_provider"],
+                email_provider=domain_results["email_provider"],
+                full_output=full_output,
+            )
+        )
 
     if inspect_ssl:
         ssl_info = inspect_ssl_certificate(domain, timeout=engine.resolver.timeout)
@@ -364,7 +221,7 @@ def process_single_domain(
         domain_results["email_security"] = email_info
         output_lines.extend(format_email_security_block(email_info, full_output=full_output))
 
-    output_lines.append("-"*80)
+    output_lines.append("\n" + "-"*80)
     tqdm.write("\n".join(output_lines))
     return domain_results
 
