@@ -25,9 +25,10 @@ from core.validator import is_valid_domain, is_valid_ip
 from core.whois_inspector import inspect_whois
 
 
-ALL_RECORD_TYPES = [
+SUPPORTED_RECORD_TYPES = (
     "A", "AAAA", "MX", "NS", "TXT", "CNAME", "SOA", "CAA", "SRV", "PTR", "HTTPS", "SVCB"
-]
+)
+ALL_RECORD_TYPES = list(SUPPORTED_RECORD_TYPES)
 SEPARATOR_WIDTH = 80
 INTERN_SEPARATOR_WIDTH = 72
 SECTION_DIVIDER = "\n" + "-" * SEPARATOR_WIDTH
@@ -106,6 +107,40 @@ def parse_arguments():
     )
 
     return parser.parse_args()
+
+
+def parse_record_types(raw_type: str | None, *, include_all_flag: bool = False) -> tuple[bool, list[str]]:
+    """
+    Determines whether DNS records should be queried/displayed and returns
+    (show_dns_records, record_types). Raises ValueError on unsupported record types.
+    """
+    show_dns_records = (raw_type is not None) or include_all_flag
+    if not show_dns_records:
+        return False, []
+
+    effective = raw_type if raw_type is not None else "ALL"
+    normalized = effective.strip().upper()
+
+    if not normalized:
+        raise ValueError("Record type cannot be empty when -t/--type is specified.")
+
+    if normalized == "ALL":
+        return True, list(ALL_RECORD_TYPES)
+
+    requested = [item.strip().upper() for item in normalized.split(",") if item.strip()]
+    if not requested:
+        raise ValueError("Record type cannot be empty when -t/--type is specified.")
+
+    invalid = [rt for rt in requested if rt not in SUPPORTED_RECORD_TYPES]
+    if invalid:
+        supported_str = ", ".join(SUPPORTED_RECORD_TYPES)
+        raise ValueError(
+            f"Unsupported DNS record type(s): {', '.join(invalid)}. Supported: {supported_str}, ALL"
+        )
+
+    # Deduplica preservando orden
+    deduped = list(dict.fromkeys(requested))
+    return True, deduped
 
 
 def load_domains_from_file(filepath: str) -> list[str]:
@@ -249,7 +284,15 @@ def main():
     args.email = args.email or args.all
     args.full = args.full or args.all
 
-    show_dns_records = (args.record_type is not None) or args.all
+    try:
+        show_dns_records, record_types = parse_record_types(
+            args.record_type,
+            include_all_flag=args.all,
+        )
+    except ValueError as exc:
+        print(f"[!] Error: {exc}")
+        sys.exit(1)
+
     if show_dns_records:
         effective_type = args.record_type if args.record_type is not None else "ALL"
         if effective_type.upper() == "ALL":
