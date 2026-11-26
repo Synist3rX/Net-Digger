@@ -80,7 +80,7 @@ net-digger/
 | `--email` | Audita la configuración de autenticación de correo (`SPF`, `DMARC` y `DKIM`). | `False` |
 | `--full` | Muestra valores íntegros sin truncar en tablas, SANs, estados WHOIS y registros SPF/DMARC. | `False` |
 | `--all` | Activa todos los módulos y salida completa (`-t ALL`, `--ssl`, `--whois`, `--email` y `--full`). | `False` |
-| `-o`, `--output` | Ruta del archivo donde se exportarán los resultados en formato JSON. | `None` |
+| `-o`, `--output` | Exporta los resultados a JSON. Si se usa `-o` sin nombre guarda en `output/<objetivo>.json`; si se da solo un nombre (`reporte.json`) usa `output/reporte.json`; si se da una ruta con carpeta respeta esa ruta. | `None` (no exporta si se omite) |
 
 ---
 
@@ -202,6 +202,12 @@ python digger.py -f dominios.txt -ns 8.8.8.8 -t ALL --tcp -r 3 -o reportes/audit
     }
 ]
 ```
+
+### Exportar a `output/` automáticamente (`-o`)
+```bash
+python digger.py google.com --all -o
+```
+Crea la carpeta `output/` (si no existe) y guarda el reporte en `output/google.com.json`. Si consultas una lista con `-f`, genera un archivo con marca de tiempo dentro de `output/` (`output/digger_YYYYMMDD_HHMMSS.json`).
 
 ---
 

@@ -10,7 +10,7 @@ from tqdm import tqdm
 
 from core.detector import detect_dns_provider, detect_email_provider
 from core.email_security import inspect_email_security
-from core.exporter import export_to_json
+from core.exporter import export_to_json, resolve_output_path
 from core.formatters import (
     format_dns_records_block,
     format_email_security_block,
@@ -85,7 +85,10 @@ def parse_arguments():
     )
     parser.add_argument(
         "-o", "--output",
-        help="Path to the JSON output file (e.g., results.json)"
+        nargs="?",
+        const="",
+        default=None,
+        help="Export results to JSON. Defaults to 'output/<target>.json' when passed without a filename"
     )
     parser.add_argument(
         "--full",
@@ -364,12 +367,13 @@ def main():
 
     print("-" * 50)
 
-    if args.output:
-        success, message = export_to_json(all_results, args.output)
+    if args.output is not None:
+        output_path = resolve_output_path(args.output, domains)
+        success, message = export_to_json(all_results, str(output_path))
         if success:
-            print(f"[✔] {message}")
+            print(f"\n[✔] {message}")
         else:
-            print(f"[✖] {message}")
+            print(f"\n[✖] {message}")
 
 
 if __name__ == "__main__":
