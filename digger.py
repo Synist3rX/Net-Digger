@@ -40,9 +40,16 @@ def parse_arguments():
         description="Net Digger: Advanced DNS query and reconnaissance CLI tool."
     )
 
-    group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("-d", "--domain", help="Target single domain to query (e.g., example.com or eñe.es)")
-    group.add_argument("-f", "--file", help="TXT file containing a list of domains (one per line)")
+    parser.add_argument(
+        "domain_pos",
+        nargs="?",
+        metavar="DOMAIN",
+        help="Target domain to query (e.g., example.com or eñe.es)"
+    )
+
+    source_group = parser.add_mutually_exclusive_group()
+    source_group.add_argument("-d", "--domain", dest="domain_opt", help="Target single domain to query")
+    source_group.add_argument("-f", "--file", help="TXT file containing a list of domains (one per line)")
 
     parser.add_argument(
         "-t", "--type",
@@ -268,16 +275,25 @@ def main():
         print(f"[!] Error: Invalid nameserver IP address format: '{args.nameserver}'")
         sys.exit(1)
 
-    if args.domain:
-        if not is_valid_domain(args.domain):
-            print(f"[!] Error: Invalid domain format: '{args.domain}'")
+    if args.domain_opt and args.domain_pos:
+        print("[!] Error: Provide the target domain either positionally or via -d/--domain, not both.")
+        sys.exit(1)
+
+    single_domain = args.domain_opt or args.domain_pos
+
+    if single_domain:
+        if not is_valid_domain(single_domain):
+            print(f"[!] Error: Invalid domain format: '{single_domain}'")
             sys.exit(1)
-        domains = [args.domain]
-    else:
+        domains = [single_domain]
+    elif args.file:
         domains = load_domains_from_file(args.file)
         if not domains:
             print("[!] Error: No valid domains found in the specified file.")
             sys.exit(1)
+    else:
+        print("[!] Error: You must specify a target domain or a file (-f/--file).")
+        sys.exit(1)
 
     args.ssl = args.ssl or args.all
     args.whois = args.whois or args.all

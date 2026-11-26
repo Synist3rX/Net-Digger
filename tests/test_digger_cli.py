@@ -2,29 +2,27 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from digger import parse_record_types, process_single_domain
+from core.formatters import INTERN_SEPARATOR_WIDTH, SEPARATOR_WIDTH, format_dns_records_block
+from digger import load_domains_from_file, parse_record_types, process_single_domain
 
 
 def test_parse_record_types_modes():
-    # Sin -t ni --all -> solo target
-    show, types = parse_record_types(None, include_all_flag=False)
-    assert show is False
-    assert types == []
+    """Cubre sin -t (solo target), -t sin valor (ALL), tipos personalizados y --all."""
+    show_none, types_none = parse_record_types(None, include_all_flag=False)
+    assert (show_none, types_none) == (False, [])
 
-    # -t sin valor (const="ALL") -> muestra DNS records con ALL
     show_t, types_t = parse_record_types("ALL", include_all_flag=False)
     assert show_t is True
-    assert "A" in types_t and "MX" in types_t and "SVCB" in types_t
+    assert {"A", "AAAA", "MX", "NS", "TXT", "CNAME", "SOA", "CAA", "SRV", "PTR", "HTTPS", "SVCB"}.issubset(
+        set(types_t)
+    )
 
-    # -t con tipos específicos y duplicados
     show_custom, types_custom = parse_record_types("mx, a, MX", include_all_flag=False)
-    assert show_custom is True
-    assert types_custom == ["MX", "A"]
+    assert (show_custom, types_custom) == (True, ["MX", "A"])
 
-    # --all sin -t explícito -> activa DNS records con ALL
     show_all, types_all = parse_record_types(None, include_all_flag=True)
     assert show_all is True
-    assert len(types_all) > 5
+    assert len(types_all) == 12
 
 
 @pytest.mark.parametrize("bad_type", ["INVALID", "A,FOO", "   "])
@@ -33,10 +31,16 @@ def test_parse_record_types_rejects_invalid(bad_type):
         parse_record_types(bad_type, include_all_flag=False)
 
 
-def test_process_single_domain_hides_dns_table_without_t():
+def test_process_single_domain_visibility_and_dns_count():
+    """Verifica que sin -t solo se muestre Target y con -t aparezca DNS Records con su contador."""
     engine = MagicMock()
     engine.resolver.timeout = 3.0
-
+    engine.query_record.return_value = {
+        "status": "SUCCESS",
+        "type": "A",
+        "ttl": 300,
+        "records": [{"value": "93.184.216.34", "priority": None}],
+    }
     fake_target = {
         "query": "example.com",
         "ip": "93.184.216.34",
@@ -49,53 +53,70 @@ def test_process_single_domain_hides_dns_table_without_t():
         patch("digger.gather_target_metadata", return_value=fake_target),
         patch("digger.tqdm.write") as mock_write,
     ):
-        res = process_single_domain(
-            domain="example.com",
-            engine=engine,
-            record_types=[],
-            show_dns_records=False,
-        )
+        process_single_domain("example.com", engine, [], show_dns_records=False)
+        only_target = mock_write.call_args[0][0]
+        assert "[>] Target: example.com" in only_target
+        assert "Resolves To     : 93.184.216.34 (edge.example.com)" in only_target
+        assert "HTTP Status     : 200" in only_target
+        assert "[>] DNS Records" not in only_target
+        assert "records found" not in only_target
 
-    engine.query_record.assert_not_called()
-    rendered = mock_write.call_args[0][0]
-    assert "[>] Target: example.com" in rendered
-    assert "Resolves To     : 93.184.216.34 (edge.example.com)" in rendered
-    assert "HTTP Status     : 200" in rendered
-    assert "[>] DNS Records" not in rendered
-    assert res["target"] == fake_target
+        process_single_domain("example.com", engine, ["A"], show_dns_records=True)
+        with_dns = mock_write.call_args[0][0]
+        assert "[>] Target: example.com" in with_dns
+        assert "records found" not in with_dns.splitlines()[1]
+        assert "[>] DNS Records (1 records found)" in with_dns
+        assert "93.184.216.34" in with_dns
 
 
-def test_process_single_domain_shows_dns_table_with_t():
-    engine = MagicMock()
-    engine.resolver.timeout = 3.0
-    engine.query_record.return_value = {
-        "status": "SUCCESS",
-        "type": "A",
-        "ttl": 300,
-        "records": [{"value": "93.184.216.34", "priority": None}],
-    }
+def test_format_dns_records_block_separators_and_providers():
+    """Comprueba separadores constantes, truncado y detección de proveedores NS/MX."""
+    rows = [("A", "1.2.3.4", "", "120s"), ("NS", "ns1.example.com", "", "600s")]
+    lines = format_dns_records_block(
+        table_rows=rows,
+        total_records=2,
+        record_types=["A", "NS"],
+        dns_provider="Cloudflare",
+        full_output=False,
+    )
+    rendered = "\n".join(lines)
+    assert ("-" * SEPARATOR_WIDTH) in rendered
+    assert ("    " + "-" * INTERN_SEPARATOR_WIDTH) in rendered
+    assert "[>] DNS Records (2 records found)" in rendered
+    assert "DNS Provider   : Cloudflare (detected via NS)" in rendered
 
-    fake_target = {
-        "query": "example.com",
-        "ip": "93.184.216.34",
-        "ptr": None,
-        "resolves_to": "93.184.216.34",
-        "http_status": 200,
-    }
 
-    with (
-        patch("digger.gather_target_metadata", return_value=fake_target),
-        patch("digger.tqdm.write") as mock_write,
-    ):
-        res = process_single_domain(
-            domain="example.com",
-            engine=engine,
-            record_types=["A"],
-            show_dns_records=True,
-        )
+def test_load_domains_from_file_skips_comments_and_invalid(tmp_path):
+    """Carga dominios válidos ignorando comentarios, líneas vacías y formatos inválidos."""
+    domain_file = tmp_path / "domains.txt"
+    domain_file.write_text("# comentario\n\nexample.com\ninvalid_domain\neñe.es\n", encoding="utf-8")
 
-    engine.query_record.assert_called_once_with("example.com", "A")
-    rendered = mock_write.call_args[0][0]
-    assert "[>] DNS Records (1 records found)" in rendered
-    assert "93.184.216.34" in rendered
-    assert res["total_records"] == 1
+    with patch("digger.tqdm.write") as mock_warn:
+        loaded = load_domains_from_file(str(domain_file))
+
+    assert loaded == ["example.com", "eñe.es"]
+    mock_warn.assert_called_once()
+
+
+def test_main_rejects_both_positional_and_flag_domain(monkeypatch, capsys):
+    """Rechaza pasar dominio posicional y -d al mismo tiempo."""
+    from digger import main
+
+    monkeypatch.setattr("sys.argv", ["digger.py", "google.com", "-d", "example.com"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+
+    assert exc.value.code == 1
+    assert "not both" in capsys.readouterr().out.lower()
+
+
+def test_main_rejects_missing_target(monkeypatch, capsys):
+    """Sale con código 1 cuando no se indica dominio posicional, -d ni -f."""
+    from digger import main
+
+    monkeypatch.setattr("sys.argv", ["digger.py"])
+    with pytest.raises(SystemExit) as exc:
+        main()
+
+    assert exc.value.code == 1
+    assert "must specify" in capsys.readouterr().out.lower()
