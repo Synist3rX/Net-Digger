@@ -120,3 +120,46 @@ def test_main_rejects_missing_target(monkeypatch, capsys):
 
     assert exc.value.code == 1
     assert "must specify" in capsys.readouterr().out.lower()
+
+def test_process_single_domain_runs_blacklist_module():
+    engine = MagicMock()
+    engine.resolver.timeout = 3.0
+
+    fake_target = {
+        "query": "example.com",
+        "ip": "142.251.215.238",
+        "ptr": None,
+        "resolves_to": "142.251.215.238",
+        "http_status": 200,
+    }
+    fake_blacklist = {
+        "status": "SUCCESS",
+        "overall_status": "Clean",
+        "checked_ip": "142.251.215.238",
+        "total_checked": 13,
+        "clean_count": 13,
+        "listed_count": 0,
+        "error_count": 0,
+        "checks": [],
+    }
+
+    with (
+        patch("digger.gather_target_metadata", return_value=fake_target),
+        patch("digger.inspect_blacklist_block", return_value=fake_blacklist) as mock_bl,
+        patch("digger.tqdm.write") as mock_write,
+    ):
+        res = process_single_domain(
+            domain="example.com",
+            engine=engine,
+            record_types=[],
+            show_dns_records=False,
+            inspect_blacklist=True,
+            full_output=False,
+        )
+
+    mock_bl.assert_called_once_with(domain="example.com", engine=engine, ip="142.251.215.238")
+    rendered = mock_write.call_args[0][0]
+    assert "[>] Blacklist Check" in rendered
+    assert "Overall         : Clean" in rendered
+    assert "Clean: 13/13" in rendered
+    assert res["blacklist"] == fake_blacklist

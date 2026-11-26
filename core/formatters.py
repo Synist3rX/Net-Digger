@@ -180,3 +180,68 @@ def format_email_security_block(email_info: dict | None, full_output: bool = Fal
     lines.append(f"    {'DKIM':<16}: {dkim_status} ({dkim_detail})")
 
     return lines
+
+
+def format_blacklist_block(
+    blacklist_info: dict | None,
+    full_output: bool = False,
+) -> list[str]:
+    lines = [SECTION_DIVIDER, "[>] Blacklist Check"]
+
+    if not isinstance(blacklist_info, dict):
+        lines.append("    [-] Blacklist inspection returned no data.")
+        return lines
+
+    if blacklist_info.get("status") != "SUCCESS":
+        lines.append(f"    [-] {blacklist_info.get('message', 'Unknown blacklist error')}")
+        return lines
+
+    overall = blacklist_info.get("overall_status", "Clean")
+    checked_ip = blacklist_info.get("checked_ip", "N/A")
+    clean_count = blacklist_info.get("clean_count", 0)
+    listed_count = blacklist_info.get("listed_count", 0)
+    error_count = blacklist_info.get("error_count", 0)
+    total_checked = blacklist_info.get("total_checked", 0)
+
+    lines.append(f"    {'Overall':<16}: {overall}")
+    lines.append(f"    {'Checked IP':<16}: {checked_ip}")
+
+    summary_parts = [f"Clean: {clean_count}/{total_checked}"]
+    if listed_count > 0:
+        summary_parts.append(f"Listed: {listed_count}")
+    if error_count > 0:
+        summary_parts.append(f"Errors: {error_count}")
+    lines.append(f"    {'Summary':<16}: " + " | ".join(summary_parts))
+
+    checks = blacklist_info.get("checks") or []
+    notable_checks = [c for c in checks if c.get("status") in {"Listed", "Error"}]
+
+    lines.append(INDENTED_DIVIDER)
+    lines.append(f"    {'PROVIDER':<22} {'SCOPE':<8} {'STATUS':<8} {'DETAIL'}")
+    lines.append(INDENTED_DIVIDER)
+
+    if full_output and checks:
+        for item in checks:
+            name = str(item.get("name", "Unknown"))[:22]
+            scope = str(item.get("scope", "ip"))[:8]
+            status = str(item.get("status", "Clean"))[:8]
+            if status == "Listed":
+                detail = str(item.get("response") or "Listed")
+            elif status == "Error":
+                detail = str(item.get("message") or "Query error")
+            elif status == "Skipped":
+                detail = str(item.get("message") or "Skipped")
+            else:
+                detail = "OK"
+            lines.append(f"    {name:<22} {scope:<8} {status:<8} {detail}")
+    elif notable_checks:
+        for item in notable_checks:
+            name = str(item.get("name", "Unknown"))[:22]
+            scope = str(item.get("scope", "ip"))[:8]
+            status = str(item.get("status", "Listed"))[:8]
+            detail = str(item.get("response") or item.get("message") or status)
+            lines.append(f"    {name:<22} {scope:<8} {status:<8} {detail}")
+
+    lines.append(INDENTED_DIVIDER)
+
+    return lines

@@ -12,6 +12,7 @@ from core.detector import detect_dns_provider, detect_email_provider
 from core.email_security import inspect_email_security
 from core.exporter import export_to_json, resolve_output_path
 from core.formatters import (
+    format_blacklist_block,
     format_dns_records_block,
     format_email_security_block,
     format_ssl_block,
@@ -23,6 +24,7 @@ from core.ssl_inspector import inspect_ssl_certificate
 from core.target_inspector import gather_target_metadata
 from core.validator import is_valid_domain, is_valid_ip
 from core.whois_inspector import inspect_whois
+from core.blacklist_inspector import inspect_blacklist_block
 
 
 SUPPORTED_RECORD_TYPES = (
@@ -111,6 +113,11 @@ def parse_arguments():
         help="Audit email authentication posture (SPF, DMARC, and common DKIM selectors)"
     )
     parser.add_argument(
+        "--blacklist",
+        action="store_true",
+        help="Check target IP and domain against common DNSBL and URIBL blacklists",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
         help="Enable all inspection modules and full output (--ssl, --whois, --email, and --full)"
@@ -176,10 +183,11 @@ def process_single_domain(
     engine: DNSResolverEngine,
     record_types: list[str],
     show_dns_records: bool = False,
-    full_output: bool = False,
+    inspect_blacklist: bool = False,
+    inspect_email: bool = False,
     inspect_ssl: bool = False,
     inspect_whois_flag: bool = False,
-    inspect_email: bool = False,
+    full_output: bool = False,
 ) -> dict:
     domain_results = {
         "domain": domain,
@@ -235,6 +243,15 @@ def process_single_domain(
     )
     domain_results["target"] = target_meta
 
+    blacklist_info = None
+    if inspect_blacklist:
+        blacklist_info = inspect_blacklist_block(
+            domain=domain,
+            engine=engine,
+            ip=target_meta.get("ip"),
+        )
+        domain_results["blacklist"] = blacklist_info
+
     # Sección del target siempre visible
     output_lines = format_target_header(domain, target_meta)
 
@@ -265,6 +282,14 @@ def process_single_domain(
         email_info = inspect_email_security(domain, engine)
         domain_results["email_security"] = email_info
         output_lines.extend(format_email_security_block(email_info, full_output=full_output))
+
+    if inspect_blacklist:
+        output_lines.extend(
+            format_blacklist_block(
+                blacklist_info=blacklist_info,
+                full_output=full_output,
+            )
+        )
 
     output_lines.append("\n" + "-"*80)
     tqdm.write("\n".join(output_lines))
@@ -298,9 +323,10 @@ def main():
         print("[!] Error: You must specify a target domain or a file (-f/--file).")
         sys.exit(1)
 
+    args.blacklist = args.blacklist or args.all
+    args.email = args.email or args.all
     args.ssl = args.ssl or args.all
     args.whois = args.whois or args.all
-    args.email = args.email or args.all
     args.full = args.full or args.all
 
     try:
@@ -347,10 +373,11 @@ def main():
                 engine,
                 record_types,
                 show_dns_records,
-                args.full,
+                args.blacklist,
+                args.email,
                 args.ssl,
                 args.whois,
-                args.email,
+                args.full,
             ): domain
             for domain in domains
         }
