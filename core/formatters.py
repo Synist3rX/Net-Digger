@@ -467,12 +467,16 @@ def format_robots_block(
     raw_lines = robots_info.get("lines") or []
     if raw_lines:
         lines.append(INDENTED_DIVIDER)
-        preview_limit = len(raw_lines) if full_output else 15
+        preview_limit = 50 if full_output else 15
         for entry in raw_lines[:preview_limit]:
             lines.append(f"        {entry}")
+
         remaining = len(raw_lines) - preview_limit
         if remaining > 0:
-            lines.append(f"        ... ({remaining} more lines; use --full to view all)")
+            if full_output:
+                lines.append(f"        ... ({remaining} more lines; use -o to export the full content to JSON)")
+            else:
+                lines.append(f"        ... ({remaining} more lines; use --full for up to 50 or -o for full JSON)")
 
     return lines
 
@@ -500,11 +504,15 @@ def format_sitemap_block(
 
     if urls:
         lines.append(INDENTED_DIVIDER)
-        limit = len(urls) if full_output else 10
+        limit = 50 if full_output else 15
         for u in urls[:limit]:
             lines.append(f"        {u}")
+
         extra = len(urls) - limit
         if extra > 0:
-            lines.append(f"        ... ({extra} more URLs; use --full to view all)")
+            if full_output:
+                lines.append(f"        ... ({extra} more URLs; use -o to export the full content to JSON)")
+            else:
+                lines.append(f"        ... ({extra} more URLs; use --full for up to 50 or -o for full JSON)")
 
     return lines

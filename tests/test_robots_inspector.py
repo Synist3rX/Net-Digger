@@ -55,11 +55,11 @@ def test_inspect_robots_parses_directives_and_formats_compact_vs_full():
     assert ("-" * SEPARATOR_WIDTH) in compact
     assert ("    " + "-" * INTERN_SEPARATOR_WIDTH) in compact
     assert "[>] Robots" in compact
-    assert "more lines; use --full to view all" in compact
+    assert "more lines; use --full for up to 50 or -o for full JSON" in compact
 
     full = "\n".join(format_robots_block(result, full_output=True))
     assert "Disallow: /path-14" in full
-    assert "more lines; use --full" not in full
+    assert "more lines; use --full for up to 50 or -o for full JSON" not in full
 
 
 def test_inspect_robots_falls_back_to_http_when_https_fails():

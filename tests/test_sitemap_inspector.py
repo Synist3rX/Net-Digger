@@ -22,7 +22,7 @@ class _FakeXmlResponse:
 
 def test_inspect_sitemap_parses_sitemapindex_from_robots_info():
     urls_xml = "\n".join(
-        [f"  <sitemap><loc>https://example.com/sitemap-{i}.xml</loc></sitemap>" for i in range(14)]
+        [f"  <sitemap><loc>https://example.com/sitemap-{i}.xml</loc></sitemap>" for i in range(16)]
     )
     xml_payload = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -38,18 +38,18 @@ def test_inspect_sitemap_parses_sitemapindex_from_robots_info():
     assert mock_open.call_args[0][0].full_url == "https://example.com/custom-index.xml"
     assert result["status"] == "SUCCESS"
     assert result["kind"] == "sitemapindex"
-    assert result["url_count"] == 14
-    assert result["badge"] == "14 sitemap URLs"
+    assert result["url_count"] == 16
+    assert result["badge"] == "16 sitemap URLs"
 
     compact = "\n".join(format_sitemap_block(result, full_output=False))
     assert ("-" * SEPARATOR_WIDTH) in compact
     assert ("    " + "-" * INTERN_SEPARATOR_WIDTH) in compact
     assert "[>] Sitemap" in compact
-    assert "more URLs; use --full to view all" in compact
+    assert "more URLs; use --full for up to 50 or -o for full JSON" in compact
 
     full = "\n".join(format_sitemap_block(result, full_output=True))
     assert "https://example.com/sitemap-13.xml" in full
-    assert "more URLs; use --full" not in full
+    assert "more URLs; use --full for up to 50 or -o for full JSON" not in full
 
 
 def test_inspect_sitemap_parses_standard_urlset_when_no_robots_info():

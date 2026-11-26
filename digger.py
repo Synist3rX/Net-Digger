@@ -291,13 +291,15 @@ def main():
     args.geolocation = args.geolocation or args.all
     args.headers = args.headers or args.all
     args.reputation = args.reputation or args.all
+    args.robots = args.robots or args.all
     args.security_score = args.security_score or args.all
+    args.sitemap = args.sitemap or args.all
     args.ssl = args.ssl or args.all
     args.whois = args.whois or args.all
     args.full = args.full or args.all
 
     try:
-        show_dns_records, record_types = parse_record_types(
+        inspect_dns_records, record_types = parse_record_types(
             args.record_type,
             include_all_flag=args.all,
         )
@@ -305,7 +307,7 @@ def main():
         print(f"[!] Error: {exc}")
         sys.exit(1)
 
-    if show_dns_records:
+    if inspect_dns_records:
         effective_type = args.record_type if args.record_type is not None else "ALL"
         if effective_type.upper() == "ALL":
             record_types = ALL_RECORD_TYPES
@@ -336,20 +338,22 @@ def main():
         future_to_domain = {
             executor.submit(
                 process_single_domain,
-                domain,
-                engine,
-                record_types,
-                show_dns_records,
-                args.blacklist,
-                args.dnssec,
-                args.email,
-                args.geolocation,
-                args.headers,
-                args.reputation,
-                args.security_score,
-                args.ssl,
-                args.whois,
-                args.full,
+                domain=domain,
+                engine=engine,
+                record_types=record_types,
+                inspect_dns_records=inspect_dns_records,
+                inspect_blacklist=args.blacklist,
+                inspect_dnssec=args.dnssec,
+                inspect_email=args.email,
+                inspect_geolocation=args.geolocation,
+                inspect_headers=args.headers,
+                inspect_reputation=args.reputation,
+                inspect_robots=args.robots,
+                inspect_score=args.security_score,
+                inspect_sitemap=args.sitemap,
+                inspect_ssl=args.ssl,
+                inspect_whois=args.whois,
+                full_output=args.full,
             ): domain
             for domain in domains
         }
