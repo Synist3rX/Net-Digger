@@ -15,23 +15,43 @@ class DNSResolverEngine:
 
     def query_record(self, domain: str, record_type: str) -> dict:
         """
-        Performs a robust DNS query with automatic retries, backoff, and TCP/UDP transport selection.
+        Performs a robust DNS query returning structured records with priority and TTL.
         """
         r_type = record_type.upper()
         target_domain = encode_idn(domain)
-        
+
         attempt = 0
         while attempt < self.retries:
             try:
-                # Se pasa el parámetro tcp según la configuración del engine
                 answers = self.resolver.resolve(target_domain, r_type, tcp=self.use_tcp)
-                results = [str(rdata) for rdata in answers]
+                records = []
+
+                for rdata in answers:
+                    priority = None
+                    value = str(rdata)
+
+                    if r_type == "TXT" and hasattr(rdata, "strings"):
+                        value = b"".join(rdata.strings).decode("utf-8", errors="replace")
+                    elif r_type == "MX" and hasattr(rdata, "preference"):
+                        priority = rdata.preference
+                        value = str(rdata.exchange).rstrip(".")
+                    elif r_type == "SRV" and hasattr(rdata, "priority"):
+                        priority = rdata.priority
+                        value = f"{rdata.weight} {rdata.port} {str(rdata.target).rstrip('.')}"
+                    elif r_type in ("NS", "CNAME"):
+                        value = value.rstrip(".")
+
+                    records.append({
+                        "value": value,
+                        "priority": priority
+                    })
+
                 return {
                     "status": "SUCCESS",
                     "domain": domain,
                     "punycode": target_domain if target_domain != domain else None,
                     "type": r_type,
-                    "data": results,
+                    "records": records,
                     "ttl": answers.rrset.ttl
                 }
             except dns.resolver.NXDOMAIN:
@@ -54,6 +74,6 @@ class DNSResolverEngine:
                         "type": r_type,
                         "message": f"DNS query failed after {self.retries} attempts. Last error: {str(e)}"
                     }
-                
+
                 sleep_time = 2 ** (attempt - 1)
                 time.sleep(sleep_time)

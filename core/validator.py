@@ -7,7 +7,7 @@ def is_valid_domain(domain: str) -> bool:
     """
     if not domain or len(domain) > 253:
         return False
-    
+
     try:
         ascii_domain = domain.encode('idna').decode('ascii')
     except UnicodeError:

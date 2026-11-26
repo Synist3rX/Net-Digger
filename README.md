@@ -84,6 +84,106 @@ Lee múltiples dominios desde un archivo `targets.txt`, consulta sus registros M
 python digger.py -f targets.txt -ns 8.8.8.8 -t MX -o reports/mx_audit.json
 ```
 
+## 🔍 Ejemplos de Uso: `DNS Records`
+
+**Net Digger** permite realizar auditorías completas de infraestructura DNS, extrayendo registros estándar y avanzados con desglose de **Prioridad**, **TTL**, conteo total de registros y detección automática de proveedores (**DNS Provider** y **Email Provider**).
+
+### 1. Consulta Completa de Registros (`-t ALL`)
+Realiza un reconocimiento integral de todos los tipos de registros soportados (`A`, `AAAA`, `MX`, `NS`, `TXT`, `CNAME`, `CAA`, `SRV`, `SOA`) utilizando un servidor DNS público confiable (como Cloudflare `1.1.1.1`):
+
+```bash
+python digger.py -d google.com -ns 1.1.1.1 -t ALL
+```
+
+**Ejemplo de salida en consola:**
+```text
+[>] Target: google.com (27 records found)
+    TYPE     PRIO   TTL      VALUE
+    ------------------------------------------------------------------------
+    A        -      99s      142.251.214.110
+    AAAA     -      278s     2607:f8b0:4023:c06::64
+    MX       10     300s     smtp.google.com
+    NS       -      86400s   ns1.google.com
+    TXT      -      3600s    v=spf1 include:_spf.google.com ~all
+    SOA      -      60s      ns1.google.com
+    CAA      -      86400s   0 issue "pki.goog"
+    ------------------------------------------------------------------------
+    [*] DNS Provider   : Google Cloud DNS (detected via NS)
+    [*] Email Provider : Google Workspace (detected via MX)
+```
+
+---
+
+### 2. Visualizar Valores Íntegros sin Recortes (`--full`)
+Por defecto, los valores muy extensos (como políticas SPF, llaves DKIM o verificaciones TXT) se acortan visualmente en la tabla para mantener la limpieza en pantalla. Utiliza la bandera `--full` para imprimir el contenido completo de cada registro:
+
+```bash
+python digger.py -d google.com -ns 1.1.1.1 -t TXT --full
+```
+
+---
+
+### 3. Consultas Específicas de Seguridad e Infraestructura (`CAA`, `SRV`, `MX`)
+Puedes auditar tipos de registros concretos de forma individual:
+
+* **Verificar Autoridades Certificadoras permitidas (SSL/TLS):**
+  ```bash
+  python digger.py -d github.com -ns 1.1.1.1 -t CAA
+  ```
+* **Inspeccionar servidores de correo y su prioridad:**
+  ```bash
+  python digger.py -d microsoft.com -ns 8.8.8.8 -t MX
+  ```
+* **Descubrir servicios activos en la red (`SRV`):**
+  ```bash
+  python digger.py -d microsoft.com -ns 1.1.1.1 -t SRV
+  ```
+
+---
+
+### 4. Forzar Protocolo de Transporte TCP (`--tcp`)
+Útil cuando necesitas consultar zonas con respuestas muy grandes que exceden el límite de paquetes UDP o para evadir restricciones de red específicas *(requiere un Nameserver público que soporte Do53 sobre TCP)*:
+
+```bash
+python digger.py -d example.com -ns 1.1.1.1 -t ALL --tcp
+```
+
+---
+
+### 5. Auditoría Masiva Concurrente y Exportación a JSON (`-f` + `-o`)
+Analiza una lista completa de dominios desde un archivo de texto en paralelo (multithreading con barra de progreso), aplica reintentos automáticos en caso de inestabilidad de red y guarda toda la estructura detallada en un archivo JSON:
+
+```bash
+python digger.py -f dominios.txt -ns 1.1.1.1 -t ALL -r 3 -o reportes/auditoria_dns.json
+```
+
+**Estructura generada en el archivo JSON:**
+```json
+[
+    {
+        "domain": "google.com",
+        "total_records": 27,
+        "dns_provider": "Google Cloud DNS",
+        "email_provider": "Google Workspace",
+        "queries": [
+            {
+                "status": "SUCCESS",
+                "domain": "google.com",
+                "punycode": null,
+                "type": "MX",
+                "records": [
+                    {
+                        "value": "smtp.google.com",
+                        "priority": 10
+                    }
+                ],
+                "ttl": 300
+            }
+        ]
+    }
+]
+```
+
 ---
 
 ## Ejecución de Pruebas

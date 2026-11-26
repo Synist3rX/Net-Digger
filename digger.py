@@ -8,12 +8,14 @@ from tqdm import tqdm
 from core.resolver import DNSResolverEngine
 from core.exporter import export_to_json
 from core.validator import is_valid_domain, is_valid_ip
+from core.detector import detect_dns_provider, detect_email_provider
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
         description="Net Digger: Advanced DNS query and reconnaissance CLI tool."
     )
-    
+
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("-d", "--domain", help="Target single domain to query (e.g., example.com or eñe.es)")
     group.add_argument("-f", "--file", help="TXT file containing a list of domains (one per line)")
@@ -48,6 +50,11 @@ def parse_arguments():
         "-o", "--output",
         help="Path to the JSON output file (e.g., results.json)"
     )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Display full untruncated record values in terminal output"
+    )
     return parser.parse_args()
 
 def load_domains_from_file(filepath: str) -> list[str]:
@@ -55,7 +62,7 @@ def load_domains_from_file(filepath: str) -> list[str]:
     if not path.exists():
         print(f"[!] Error: The file '{filepath}' does not exist.")
         sys.exit(1)
-    
+
     domains = []
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
@@ -67,23 +74,66 @@ def load_domains_from_file(filepath: str) -> list[str]:
                     tqdm.write(f"[!] Warning: Skipping invalid domain format in file: '{domain}'")
     return domains
 
-def process_single_domain(domain: str, engine: DNSResolverEngine, record_types: list[str]) -> dict:
-    domain_results = {"domain": domain, "queries": []}
-    tqdm.write(f"\n[>] Target: {domain}")
-    
+def process_single_domain(domain: str, engine: DNSResolverEngine, record_types: list[str], full_output: bool = False) -> dict:
+    domain_results = {
+        "domain": domain,
+        "total_records": 0,
+        "dns_provider": "Unknown",
+        "email_provider": "Unknown",
+        "queries": []
+    }
+
+    table_rows = []
+    ns_values = []
+    mx_values = []
+
     for r_type in record_types:
         result = engine.query_record(domain, r_type)
         domain_results["queries"].append(result)
-        
+
         if result["status"] == "SUCCESS":
-            puny_info = f" (Punycode: {result['punycode']})" if result.get('punycode') else ""
-            tqdm.write(f"    [+] {result['type']} records{puny_info} (TTL: {result['ttl']}s):")
-            for item in result["data"]:
-                tqdm.write(f"        -> {item}")
-        else:
-            tqdm.write(f"    [-] [{result['type']}] {result['message']}")
-            
+            ttl_str = f"{result['ttl']}s"
+            for rec in result["records"]:
+                domain_results["total_records"] += 1
+                prio_str = str(rec["priority"]) if rec["priority"] is not None else ""
+                table_rows.append((result["type"], rec["value"], prio_str, ttl_str))
+
+                if result["type"] == "NS":
+                    ns_values.append(rec["value"])
+                elif result["type"] == "MX":
+                    mx_values.append(rec["value"])
+
+    # Inferir proveedores si se consultaron NS o MX
+    if "NS" in [rt.upper() for rt in record_types]:
+        domain_results["dns_provider"] = detect_dns_provider(ns_values)
+    if "MX" in [rt.upper() for rt in record_types]:
+        domain_results["email_provider"] = detect_email_provider(mx_values)
+
+    # Renderizado limpio estilo tabla en terminal
+    output_lines = [f"\n[>] Target: {domain} ({domain_results['total_records']} records found)"]
+
+    if table_rows:
+        output_lines.append(f"    {'TYPE':<8} {'PRIO':<6} {'TTL':<8} {'VALUE'}")
+        output_lines.append("    " + "-" * 72)
+        for r_type, val, prio, ttl in table_rows:
+            prio_display = prio if prio else "-"
+            if full_output or len(val) <= 60:
+                display_val = val
+            else:
+                display_val = val[:57] + "..."
+            output_lines.append(f"    {r_type:<8} {prio_display:<6} {ttl:<8} {display_val}")
+    else:
+        output_lines.append("    [-] No DNS records retrieved for the requested type(s).")
+
+    output_lines.append("    " + "-" * 70)
+    if "NS" in [rt.upper() for rt in record_types]:
+        output_lines.append(f"    [*] DNS Provider   : {domain_results['dns_provider']} (detected via NS)")
+    if "MX" in [rt.upper() for rt in record_types]:
+        output_lines.append(f"    [*] Email Provider : {domain_results['email_provider']} (detected via MX)")
+
+    tqdm.write("\n".join(output_lines))
     return domain_results
+
 
 def main():
     args = parse_arguments()
@@ -110,9 +160,9 @@ def main():
         retries=args.retries,
         use_tcp=args.tcp
     )
-    
+
     record_types = [
-        "A", "AAAA", "MX", "NS", "TXT", "CNAME", "CAA", "SRV", "SOA"
+        "A", "AAAA", "MX", "NS", "TXT", "CNAME", "SOA", "CAA", "SRV", "PTR", "HTTPS", "SVCB"
     ] if args.type.upper() == "ALL" else [args.type]
 
     all_results = []
@@ -128,10 +178,10 @@ def main():
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_domain = {
-            executor.submit(process_single_domain, domain, engine, record_types): domain 
+            executor.submit(process_single_domain, domain, engine, record_types, args.full): domain
             for domain in domains
         }
-        
+
         with tqdm(total=len(domains), desc="Progress", unit="domain", dynamic_ncols=True) as pbar:
             for future in as_completed(future_to_domain):
                 try:
@@ -150,6 +200,7 @@ def main():
             print(f"[✔] {message}")
         else:
             print(f"[✖] {message}")
+
 
 if __name__ == "__main__":
     try:
