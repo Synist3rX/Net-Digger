@@ -77,3 +77,9 @@ class DNSResolverEngine:
 
                 sleep_time = 2 ** (attempt - 1)
                 time.sleep(sleep_time)
+
+        return {
+            "status": "ERROR",
+            "type": r_type,
+            "message": f"DNS query failed for {domain} ({r_type}) after {self.retries} attempt(s)."
+        }

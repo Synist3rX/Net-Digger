@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import sys
+import ssl
 import argparse
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -9,6 +10,7 @@ from core.resolver import DNSResolverEngine
 from core.exporter import export_to_json
 from core.validator import is_valid_domain, is_valid_ip
 from core.detector import detect_dns_provider, detect_email_provider
+from core.ssl_inspector import inspect_ssl_certificate
 
 
 def parse_arguments():
@@ -55,6 +57,12 @@ def parse_arguments():
         action="store_true",
         help="Display full untruncated record values in terminal output"
     )
+    parser.add_argument(
+        "--ssl",
+        action="store_true",
+        help="Inspect TLS/SSL certificate details on port 443 for each target domain"
+    )
+
     return parser.parse_args()
 
 def load_domains_from_file(filepath: str) -> list[str]:
@@ -74,7 +82,47 @@ def load_domains_from_file(filepath: str) -> list[str]:
                     tqdm.write(f"[!] Warning: Skipping invalid domain format in file: '{domain}'")
     return domains
 
-def process_single_domain(domain: str, engine: DNSResolverEngine, record_types: list[str], full_output: bool = False) -> dict:
+def format_ssl_block(ssl_info: dict, full_output: bool = False) -> list[str]:
+    lines = ["    " + "-" * 72, "[>] SSL Certificate"]
+
+    if not isinstance(ssl_info, dict):
+        lines.append("    [-] SSL inspection returned no data (None).")
+        return lines
+
+    if ssl_info.get("status") != "SUCCESS":
+        lines.append(f"    [-] {ssl_info.get('message', 'Unknown SSL error')}")
+        return lines
+
+    days = ssl_info["days_remaining"]
+    badge = f"{days}d left" if days is not None else "N/A"
+    covered_str = "Yes" if ssl_info["domain_included"] else "No"
+    self_signed_str = "Yes" if ssl_info["is_self_signed"] else "No"
+
+    lines.append(f"    Status          : {badge} (TLS: {ssl_info.get('tls_version') or 'N/A'})")
+    lines.append(f"    Common Name     : {ssl_info['common_name']}")
+    lines.append(f"    Issuer          : {ssl_info['issuer']}")
+    lines.append(f"    Valid From      : {ssl_info['valid_from']}")
+    lines.append(f"    Expires         : {ssl_info['expires']}")
+    lines.append(f"    Days Remaining  : {days if days is not None else 'N/A'}")
+    lines.append(f"    Domain Included : {covered_str}")
+    lines.append(f"    Self-Signed     : {self_signed_str}")
+
+    sans = ssl_info.get("sans", [])
+    if sans:
+        if full_output or len(sans) <= 6:
+            sans_display = " ".join(sans)
+        else:
+            preview = " ".join(sans[:6])
+            remaining = len(sans) - 6
+            sans_display = f"{preview} +{remaining} more"
+        label = f"SANs ({len(sans)})"
+        lines.append(f"    {label:<16}: {sans_display}")
+    else:
+        lines.append(f"    {'SANs (0)':<16}: None")
+
+    return lines
+
+def process_single_domain(domain: str, engine: DNSResolverEngine, record_types: list[str], full_output: bool = False, inspect_ssl: bool = False) -> dict:
     domain_results = {
         "domain": domain,
         "total_records": 0,
@@ -89,19 +137,26 @@ def process_single_domain(domain: str, engine: DNSResolverEngine, record_types: 
 
     for r_type in record_types:
         result = engine.query_record(domain, r_type)
+        if not isinstance(result, dict):
+            result = {
+                "status": "ERROR",
+                "type": r_type.upper(),
+                "message": "Empty response received from DNS resolver engine."
+            }
+
         domain_results["queries"].append(result)
 
-        if result["status"] == "SUCCESS":
-            ttl_str = f"{result['ttl']}s"
-            for rec in result["records"]:
+        if result.get("status") == "SUCCESS":
+            ttl_str = f"{result.get('ttl', 0)}s"
+            for rec in result.get("records", []):
                 domain_results["total_records"] += 1
-                prio_str = str(rec["priority"]) if rec["priority"] is not None else ""
-                table_rows.append((result["type"], rec["value"], prio_str, ttl_str))
+                prio_str = str(rec["priority"]) if rec.get("priority") is not None else ""
+                table_rows.append((result["type"], rec.get("value", ""), prio_str, ttl_str))
 
                 if result["type"] == "NS":
-                    ns_values.append(rec["value"])
+                    ns_values.append(rec.get("value", ""))
                 elif result["type"] == "MX":
-                    mx_values.append(rec["value"])
+                    mx_values.append(rec.get("value", ""))
 
     # Inferir proveedores si se consultaron NS o MX
     if "NS" in [rt.upper() for rt in record_types]:
@@ -130,6 +185,11 @@ def process_single_domain(domain: str, engine: DNSResolverEngine, record_types: 
         output_lines.append(f"    [*] DNS Provider   : {domain_results['dns_provider']} (detected via NS)")
     if "MX" in [rt.upper() for rt in record_types]:
         output_lines.append(f"    [*] Email Provider : {domain_results['email_provider']} (detected via MX)")
+
+    if inspect_ssl:
+        ssl_info = inspect_ssl_certificate(domain, timeout=engine.resolver.timeout)
+        domain_results["ssl_certificate"] = ssl_info
+        output_lines.extend(format_ssl_block(ssl_info, full_output=full_output))
 
     tqdm.write("\n".join(output_lines))
     return domain_results
@@ -178,7 +238,9 @@ def main():
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_domain = {
-            executor.submit(process_single_domain, domain, engine, record_types, args.full): domain
+            executor.submit(
+                process_single_domain, domain, engine, record_types, args.full, args.ssl
+            ): domain
             for domain in domains
         }
 
