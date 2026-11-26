@@ -12,6 +12,7 @@ from core.validator import is_valid_domain, is_valid_ip
 from core.detector import detect_dns_provider, detect_email_provider
 from core.ssl_inspector import inspect_ssl_certificate
 from core.whois_inspector import inspect_whois
+from core.email_security import inspect_email_security
 
 
 def parse_arguments():
@@ -68,11 +69,16 @@ def parse_arguments():
         action="store_true",
         help="Perform WHOIS lookup (port 43) for each target domain"
     )
+    parser.add_argument(
+        "--email",
+        action="store_true",
+        help="Audit email authentication posture (SPF, DMARC, and common DKIM selectors)"
+    )
 
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Enable all inspection modules and full output (--ssl, --whois, and --full)"
+        help="Enable all inspection modules and full output (--ssl, --whois, --email, and --full)"
     )
 
     return parser.parse_args()
@@ -179,8 +185,54 @@ def format_whois_block(whois_info: dict | None, full_output: bool = False) -> li
 
     return lines
 
+def format_email_security_block(email_info: dict | None, full_output: bool = False) -> list[str]:
+    lines = ["\n" + "-" * 76, "[>] Email Security"]
+
+    if not isinstance(email_info, dict):
+        lines.append("    [-] Email security inspection returned no data.")
+        return lines
+
+    if email_info.get("status") != "SUCCESS":
+        lines.append(f"    [-] {email_info.get('message', 'Unknown email security error')}")
+        return lines
+
+    lines.append(f"    {'Overall':<16}: {email_info.get('overall_status', 'Partial')}")
+
+    # SPF
+    spf = email_info.get("spf", {})
+    spf_status = spf.get("status", "Missing")
+    spf_lookups = f"{spf.get('lookups', 0)}/{spf.get('max_lookups', 10)} lookups"
+    lines.append(f"    {'SPF':<16}: {spf_status} ({spf_lookups})")
+    if spf.get("record"):
+        rec = spf["record"]
+        if not full_output and len(rec) > 72:
+            rec = rec[:69] + "..."
+        lines.append(f"    {'SPF Record':<16}: {rec}")
+
+    # DMARC
+    dmarc = email_info.get("dmarc", {})
+    if dmarc.get("found"):
+        pol = dmarc.get("policy", "none")
+        reports = f"Reports: {dmarc['reports']}" if dmarc.get("reports") else "Reports: None"
+        lines.append(f"    {'DMARC':<16}: {pol} ({reports})")
+        if dmarc.get("record"):
+            drec = dmarc["record"]
+            if not full_output and len(drec) > 72:
+                drec = drec[:69] + "..."
+            lines.append(f"    {'DMARC Record':<16}: {drec}")
+    else:
+        lines.append(f"    {'DMARC':<16}: Missing")
+
+    # DKIM
+    dkim = email_info.get("dkim", {})
+    dkim_status = dkim.get("status", "Not detected")
+    dkim_detail = dkim.get("detail", "No selectors found from common list")
+    lines.append(f"    {'DKIM':<16}: {dkim_status} ({dkim_detail})")
+
+    return lines
+
 def process_single_domain(domain: str, engine: DNSResolverEngine, record_types: list[str], full_output: bool = False,
-                          inspect_ssl: bool = False, inspect_whois_flag: bool = False) -> dict:
+                          inspect_ssl: bool = False, inspect_whois_flag: bool = False, inspect_email: bool = False) -> dict:
     domain_results = {
         "domain": domain,
         "total_records": 0,
@@ -254,6 +306,11 @@ def process_single_domain(domain: str, engine: DNSResolverEngine, record_types: 
         domain_results["whois"] = whois_info
         output_lines.extend(format_whois_block(whois_info, full_output=full_output))
 
+    if inspect_email:
+        email_info = inspect_email_security(domain, engine)
+        domain_results["email_security"] = email_info
+        output_lines.extend(format_email_security_block(email_info, full_output=full_output))
+
     tqdm.write("\n".join(output_lines))
     return domain_results
 
@@ -278,6 +335,7 @@ def main():
 
     args.ssl = args.ssl or args.all
     args.whois = args.whois or args.all
+    args.email = args.email or args.all
     args.full = args.full or args.all
 
     # Inicializamos el motor pasando el parámetro use_tcp
@@ -313,6 +371,7 @@ def main():
                 args.full,
                 args.ssl,
                 args.whois,
+                args.email,
             ): domain
             for domain in domains
         }
