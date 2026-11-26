@@ -8,6 +8,7 @@ from tqdm import tqdm
 from core.blacklist_inspector import inspect_blacklist_block
 from core.cli_parser import ALL_RECORD_TYPES, SUPPORTED_RECORD_TYPES, parse_arguments
 from core.detector import detect_dns_provider, detect_email_provider
+from core.dns_inspector import inspect_dns_records_data
 from core.dnssec_inspector import inspect_dnssec as run_dnssec_inspection
 from core.email_security import inspect_email_security
 from core.exporter import export_to_json, resolve_output_path
@@ -102,7 +103,9 @@ def load_domains_from_file(filepath: str) -> list[str]:
 
 
 def process_single_domain(
-    domain: str, engine: DNSResolverEngine, record_types: list[str],
+    domain: str,
+    engine: DNSResolverEngine,
+    record_types: list[str],
     inspect_dns_records: bool = False,
     inspect_blacklist: bool = False,
     inspect_dnssec: bool = False,
@@ -127,8 +130,6 @@ def process_single_domain(
     }
 
     table_rows = []
-    ns_values = []
-    mx_values = []
     first_a_record = None
 
     # Sección del Target siempre visible
@@ -138,36 +139,14 @@ def process_single_domain(
 
     # -t / --type | Sección de DNS Records solo cuando se solicita
     if inspect_dns_records:
-        for r_type in record_types:
-            result = engine.query_record(domain, r_type)
-            if not isinstance(result, dict):
-                result = {
-                    "status": "ERROR",
-                    "type": r_type.upper(),
-                    "message": "Empty response received from DNS resolver engine.",
-                }
+        dns_data = inspect_dns_records_data(domain=domain, engine=engine, record_types=record_types)
 
-            domain_results["queries"].append(result)
-
-            if result.get("status") == "SUCCESS":
-                ttl_str = f"{result.get('ttl', 0)}s"
-                for rec in result.get("records", []):
-                    domain_results["total_records"] += 1
-                    val = str(rec.get("value", ""))
-                    prio_str = str(rec["priority"]) if rec.get("priority") is not None else ""
-                    table_rows.append((result["type"], val, prio_str, ttl_str))
-
-                    if result["type"] == "A" and not first_a_record and val.strip():
-                        first_a_record = val.strip()
-                    elif result["type"] == "NS":
-                        ns_values.append(val)
-                    elif result["type"] == "MX":
-                        mx_values.append(val)
-
-        if "NS" in [rt.upper() for rt in record_types]:
-            domain_results["dns_provider"] = detect_dns_provider(ns_values)
-        if "MX" in [rt.upper() for rt in record_types]:
-            domain_results["email_provider"] = detect_email_provider(mx_values)
+        domain_results["queries"] = dns_data["queries"]
+        domain_results["total_records"] = dns_data["total_records"]
+        domain_results["dns_provider"] = dns_data["dns_provider"]
+        domain_results["email_provider"] = dns_data["email_provider"]
+        table_rows = dns_data["table_rows"]
+        first_a_record = dns_data["first_a_record"]
 
         output_lines.extend(
             format_dns_records_block(
@@ -186,24 +165,6 @@ def process_single_domain(
         domain_results["ssl_certificate"] = ssl_info
         output_lines.extend(format_ssl_block(ssl_info, full_output=full_output))
 
-    # --whois
-    if inspect_whois:
-        whois_info = run_whois_inspection(domain, timeout=engine.resolver.timeout)
-        domain_results["whois"] = whois_info
-        output_lines.extend(format_whois_block(whois_info, full_output=full_output))
-
-    # --email
-    if inspect_email:
-        email_info = inspect_email_security(domain, engine)
-        domain_results["email_security"] = email_info
-        output_lines.extend(format_email_security_block(email_info, full_output=full_output))
-
-    # --blacklist
-    if inspect_blacklist:
-        blacklist_info = inspect_blacklist_block(domain=domain, engine=engine, ip=target_meta.get("ip"))
-        domain_results["blacklist"] = blacklist_info
-        output_lines.extend(format_blacklist_block(blacklist_info=blacklist_info, full_output=full_output))
-
     # --headers
     http_headers_info = None
     if inspect_headers or inspect_score:
@@ -212,6 +173,12 @@ def process_single_domain(
             domain_results["http_headers"] = http_headers_info
             output_lines.extend(format_http_headers_block(http_info=http_headers_info, full_output=full_output))
 
+    # --whois
+    if inspect_whois:
+        whois_info = run_whois_inspection(domain, timeout=engine.resolver.timeout)
+        domain_results["whois"] = whois_info
+        output_lines.extend(format_whois_block(whois_info, full_output=full_output))
+
     # --geo / --geolocation
     geolocation_info = None
     if inspect_geolocation or inspect_reputation:
@@ -219,12 +186,6 @@ def process_single_domain(
         if inspect_geolocation:
             domain_results["geolocation"] = geolocation_info
             output_lines.extend(format_geolocation_block(geo_info=geolocation_info, full_output=full_output))
-
-    # --score / --security-score
-    if inspect_score:
-        security_score_info = inspect_security_score(target=domain, engine=engine, http_headers_info=http_headers_info)
-        domain_results["security_score"] = security_score_info
-        output_lines.extend(format_security_score_block(security_score_info=security_score_info, full_output=full_output))
 
     # --reputation
     if inspect_reputation:
@@ -237,6 +198,24 @@ def process_single_domain(
         dnssec_info = run_dnssec_inspection(domain=domain, engine=engine)
         domain_results["dnssec"] = dnssec_info
         output_lines.extend(format_dnssec_block(dnssec_info=dnssec_info, full_output=full_output))
+
+    # --score / --security-score
+    if inspect_score:
+        security_score_info = inspect_security_score(target=domain, engine=engine, http_headers_info=http_headers_info)
+        domain_results["security_score"] = security_score_info
+        output_lines.extend(format_security_score_block(security_score_info=security_score_info, full_output=full_output))
+
+    # --email
+    if inspect_email:
+        email_info = inspect_email_security(domain, engine)
+        domain_results["email_security"] = email_info
+        output_lines.extend(format_email_security_block(email_info, full_output=full_output))
+
+    # --blacklist
+    if inspect_blacklist:
+        blacklist_info = inspect_blacklist_block(domain=domain, engine=engine, ip=target_meta.get("ip"))
+        domain_results["blacklist"] = blacklist_info
+        output_lines.extend(format_blacklist_block(blacklist_info=blacklist_info, full_output=full_output))
 
     # --robots
     robots_info = None
