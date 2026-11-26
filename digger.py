@@ -11,6 +11,7 @@ from core.exporter import export_to_json
 from core.validator import is_valid_domain, is_valid_ip
 from core.detector import detect_dns_provider, detect_email_provider
 from core.ssl_inspector import inspect_ssl_certificate
+from core.whois_inspector import inspect_whois
 
 
 def parse_arguments():
@@ -62,6 +63,17 @@ def parse_arguments():
         action="store_true",
         help="Inspect TLS/SSL certificate details on port 443 for each target domain"
     )
+    parser.add_argument(
+        "--whois",
+        action="store_true",
+        help="Perform WHOIS lookup (port 43) for each target domain"
+    )
+
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Enable all inspection modules (--ssl and --whois)"
+    )
 
     return parser.parse_args()
 
@@ -83,7 +95,7 @@ def load_domains_from_file(filepath: str) -> list[str]:
     return domains
 
 def format_ssl_block(ssl_info: dict, full_output: bool = False) -> list[str]:
-    lines = ["    " + "-" * 72, "[>] SSL Certificate"]
+    lines = ["\n" + "-" * 76, "[>] SSL Certificate"]
 
     if not isinstance(ssl_info, dict):
         lines.append("    [-] SSL inspection returned no data (None).")
@@ -122,7 +134,53 @@ def format_ssl_block(ssl_info: dict, full_output: bool = False) -> list[str]:
 
     return lines
 
-def process_single_domain(domain: str, engine: DNSResolverEngine, record_types: list[str], full_output: bool = False, inspect_ssl: bool = False) -> dict:
+def format_whois_block(whois_info: dict | None, full_output: bool = False) -> list[str]:
+    lines = ["\n" + "-" * 76, "[>] WHOIS"]
+
+    if not isinstance(whois_info, dict):
+        lines.append("    [-] WHOIS inspection returned no data.")
+        return lines
+
+    if whois_info.get("status") != "SUCCESS":
+        lines.append(f"    [-] {whois_info.get('message', 'Unknown WHOIS error')}")
+        return lines
+
+    years_ago = whois_info.get("years_ago")
+    registered_str = whois_info.get("registered", "N/A")
+    if years_ago is not None and registered_str != "N/A":
+        registered_str = f"{registered_str} ({years_ago} years ago)"
+
+    term_years = whois_info.get("term_years")
+    term_str = f"{term_years} years" if term_years is not None else "N/A"
+
+    ns_list = whois_info.get("nameservers", [])
+    ns_str = " ".join(ns_list) if ns_list else "None"
+
+    statuses = whois_info.get("statuses", [])
+    if statuses:
+        if full_output or len(statuses) <= 6:
+            status_str = ", ".join(statuses)
+        else:
+            status_str = ", ".join(statuses[:6]) + f" +{len(statuses) - 6} more"
+    else:
+        status_str = "None"
+
+    lines.append(f"    {'Domain':<16}: {whois_info.get('domain', 'N/A')}")
+    lines.append(f"    {'Registrar':<16}: {whois_info.get('registrar', 'N/A')}")
+    lines.append(f"    {'Registrar URL':<16}: {whois_info.get('registrar_url', 'N/A')}")
+    lines.append(f"    {'Country':<16}: {whois_info.get('country', 'N/A')}")
+    lines.append(f"    {'DNSSEC':<16}: {whois_info.get('dnssec', 'unsigned')}")
+    lines.append(f"    {'Registered':<16}: {registered_str}")
+    lines.append(f"    {'Term':<16}: {term_str}")
+    lines.append(f"    {'Updated':<16}: {whois_info.get('updated', 'N/A')}")
+    lines.append(f"    {'Expires':<16}: {whois_info.get('expires', 'N/A')}")
+    lines.append(f"    {'Nameservers':<16}: {ns_str}")
+    lines.append(f"    {'Status':<16}: {status_str}")
+
+    return lines
+
+def process_single_domain(domain: str, engine: DNSResolverEngine, record_types: list[str], full_output: bool = False,
+                          inspect_ssl: bool = False, inspect_whois_flag: bool = False) -> dict:
     domain_results = {
         "domain": domain,
         "total_records": 0,
@@ -191,6 +249,11 @@ def process_single_domain(domain: str, engine: DNSResolverEngine, record_types: 
         domain_results["ssl_certificate"] = ssl_info
         output_lines.extend(format_ssl_block(ssl_info, full_output=full_output))
 
+    if inspect_whois_flag:
+        whois_info = inspect_whois(domain, timeout=engine.resolver.timeout)
+        domain_results["whois"] = whois_info
+        output_lines.extend(format_whois_block(whois_info, full_output=full_output))
+
     tqdm.write("\n".join(output_lines))
     return domain_results
 
@@ -212,6 +275,9 @@ def main():
         if not domains:
             print("[!] Error: No valid domains found in the specified file.")
             sys.exit(1)
+
+    args.ssl = args.ssl or args.all
+    args.whois = args.whois or args.all
 
     # Inicializamos el motor pasando el parámetro use_tcp
     engine = DNSResolverEngine(
@@ -239,7 +305,13 @@ def main():
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_domain = {
             executor.submit(
-                process_single_domain, domain, engine, record_types, args.full, args.ssl
+                process_single_domain,
+                domain,
+                engine,
+                record_types,
+                args.full,
+                args.ssl,
+                args.whois,
             ): domain
             for domain in domains
         }
