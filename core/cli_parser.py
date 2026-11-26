@@ -121,9 +121,24 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
         help="Evaluate HTTP security headers score and letter grade",
     )
     parser.add_argument(
+        "--reputation",
+        action="store_true",
+        help="Check IP reputation, abuse score, reports, ISP, and whitelist status",
+    )
+    parser.add_argument(
+        "--dnssec",
+        action="store_true",
+        help="Inspect DNSSEC status, DNSKEY/DS records, and Authenticated Data (AD) flag",
+    )
+    parser.add_argument(
         "--all",
         action="store_true",
-        help="Enable all inspection modules and full output (--type ALL, --ssl, --whois, --email, --blacklist, --headers, --geolocation, --security-score and --full)",
+        help=(
+            "Enable all inspection modules and full output "
+            "(--type ALL, --ssl, --whois, --email, --blacklist,"
+            " --headers, --geolocation, --security-score,"
+            " --reputation, --dnssec and --full)"
+        ),
     )
 
     return parser.parse_args(argv)

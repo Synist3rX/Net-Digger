@@ -8,14 +8,17 @@ from tqdm import tqdm
 from core.blacklist_inspector import inspect_blacklist_block
 from core.cli_parser import ALL_RECORD_TYPES, SUPPORTED_RECORD_TYPES, parse_arguments
 from core.detector import detect_dns_provider, detect_email_provider
+from core.dnssec_inspector import inspect_dnssec as run_dnssec_inspection
 from core.email_security import inspect_email_security
 from core.exporter import export_to_json, resolve_output_path
 from core.formatters import (
     format_blacklist_block,
     format_dns_records_block,
+    format_dnssec_block,
     format_email_security_block,
     format_geolocation_block,
     format_http_headers_block,
+    format_reputation_block,
     format_security_score_block,
     format_ssl_block,
     format_target_header,
@@ -23,6 +26,7 @@ from core.formatters import (
 )
 from core.geo_inspector import inspect_geolocation as run_geolocation_inspection
 from core.http_inspector import inspect_http_headers
+from core.reputation_inspector import inspect_reputation as run_reputation_inspection
 from core.resolver import DNSResolverEngine
 from core.security_score import inspect_security_score
 from core.ssl_inspector import inspect_ssl_certificate
@@ -99,9 +103,11 @@ def process_single_domain(
     record_types: list[str],
     show_dns_records: bool = False,
     inspect_blacklist: bool = False,
+    inspect_dnssec: bool = False,
     inspect_email: bool = False,
     inspect_geolocation: bool = False,
     inspect_headers: bool = False,
+    inspect_reputation: bool = False,
     inspect_score: bool = False,
     inspect_ssl: bool = False,
     inspect_whois: bool = False,
@@ -195,6 +201,17 @@ def process_single_domain(
         )
         domain_results["security_score"] = security_score_info
 
+    dnssec_info = None
+    if inspect_dnssec:
+        dnssec_info = run_dnssec_inspection(
+            domain=domain,
+            engine=engine,
+        )
+        domain_results["dnssec"] = dnssec_info
+
+    # reputation_info = None
+    # if inspect_reputation:
+
     # Sección del target siempre visible
     output_lines = format_target_header(domain, target_meta)
 
@@ -227,36 +244,28 @@ def process_single_domain(
         output_lines.extend(format_email_security_block(email_info, full_output=full_output))
 
     if inspect_blacklist:
-        output_lines.extend(
-            format_blacklist_block(
-                blacklist_info=blacklist_info,
-                full_output=full_output,
-            )
-        )
+        output_lines.extend(format_blacklist_block(blacklist_info=blacklist_info, full_output=full_output))
 
     if inspect_headers:
-        output_lines.extend(
-            format_http_headers_block(
-                http_info=http_headers_info,
-                full_output=full_output,
-            )
-        )
+        output_lines.extend(format_http_headers_block(http_info=http_headers_info, full_output=full_output))
 
     if inspect_geolocation:
-        output_lines.extend(
-            format_geolocation_block(
-                geo_info=geolocation_info,
-                full_output=full_output,
-            )
-        )
+        output_lines.extend(format_geolocation_block(geo_info=geolocation_info, full_output=full_output))
 
     if inspect_score:
-        output_lines.extend(
-            format_security_score_block(
-                security_score_info=security_score_info,
-                full_output=full_output,
-            )
+        output_lines.extend(format_security_score_block(security_score_info=security_score_info, full_output=full_output))
+
+    if inspect_reputation:
+        reputation_info = run_reputation_inspection(
+            ip=target_meta.get("ip"),
+            engine=engine,
+            geolocation_info=geolocation_info,
         )
+        domain_results["reputation"] = reputation_info
+        output_lines.extend(format_reputation_block(reputation_info=reputation_info, full_output=full_output))
+
+    if inspect_dnssec:
+        output_lines.extend(format_dnssec_block(dnssec_info=dnssec_info, full_output=full_output))
 
     output_lines.append("\n" + "-"*80)
     tqdm.write("\n".join(output_lines))
@@ -291,9 +300,11 @@ def main():
         sys.exit(1)
 
     args.blacklist = args.blacklist or args.all
+    args.dnssec = args.dnssec or args.all
     args.email = args.email or args.all
     args.geolocation = args.geolocation or args.all
     args.headers = args.headers or args.all
+    args.reputation = args.reputation or args.all
     args.security_score = args.security_score or args.all
     args.ssl = args.ssl or args.all
     args.whois = args.whois or args.all
@@ -344,9 +355,11 @@ def main():
                 record_types,
                 show_dns_records,
                 args.blacklist,
+                args.dnssec,
                 args.email,
                 args.geolocation,
                 args.headers,
+                args.reputation,
                 args.security_score,
                 args.ssl,
                 args.whois,

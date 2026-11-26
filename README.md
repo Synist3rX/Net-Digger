@@ -1,4 +1,4 @@
-# Net Digger 🔍 (`v1.13.0`)
+# Net Digger 🔍 (`v1.14.0`)
 
 > Una herramienta CLI de Python robusta, modular y de alto rendimiento para reconocimiento de dominios, consultas DNS avanzadas y auditoría de infraestructura de red.
 
@@ -18,13 +18,17 @@
 
   * **Seguridad de Correo (`--email`)**: Auditoría de postura de autenticación evaluando **SPF** (con conteo de lookups DNS), **DMARC** (política y reportes) y selectores comunes de **DKIM**.
 
-  * **Reputación / Blacklist (`--blacklist`)**: Consulta la reputación de la IP y el dominio objetivo frente a listas DNSBL y URIBL mediante la API de DigDNS.
+  * **Blacklist (`--blacklist`)**: Consulta la reputación de la IP y el dominio objetivo frente a listas DNSBL y URIBL mediante la API de DigDNS.
 
   * **HTTP & Headers (`--headers`)**: Inspecciona código de estado final, cadena de redirecciones (`301`/`302`/etc.), evaluación de cabeceras de seguridad (7 cabeceras clave) y listado completo de cabeceras de respuesta.
 
   * **Geolocalización y ASN (`--geo` / `--geolocation`)**: Obtiene país, ciudad, zona horaria, coordenadas, número de Sistema Autónomo (`ASN`), organización e ISP asociado a la IP resuelta.
 
   * **Puntaje de Seguridad (`--score` / `--security-score`)**: Evalúa las cabeceras de seguridad HTTP mediante un sistema ponderado sobre 95 puntos (`HSTS`, `CSP`, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy` y `Permissions-Policy`) y asigna una calificación (`A`–`F`).
+
+  * **Reputación IP (`--reputation`)**: Consulta el puntaje de abuso (*Abuse Score*), total de reportes, usuarios distintos, ISP, tipo de uso (*Usage Type*), fecha de último reporte y estado de lista blanca (*Whitelisted*) mediante la API de DigDNS.
+
+  * **DNSSEC (`--dnssec`)**: Audita la postura criptográfica del dominio verificando registros `DNSKEY`, `DS` y el indicador `Authenticated Data` (`AD`).
 
 * **Concurrencia y Resiliencia**: Procesamiento paralelo mediante `ThreadPoolExecutor` con barra de progreso (`tqdm`), soporte de transporte UDP o TCP (`--tcp`) y reintentos automáticos con *exponential backoff* (`-r`).
 
@@ -34,24 +38,27 @@
 
 ## Arquitectura del Proyecto
 
-```
+```text
 net-digger/
-├── digger.py                  # Punto de entrada CLI, orquestación concurrente y validación de argumentos
+├── digger.py                   # Punto de entrada CLI y orquestación concurrente
 ├── core/
-│   ├── blacklist_inspector.py # Consulta y normalización de reputación DNSBL/URIBL (DigDNS API)
-│   ├── detector.py            # Detección de proveedores de DNS y correo
-│   ├── email_security.py      # Evaluación de SPF, DMARC y DKIM
-│   ├── exporter.py            # Exportación de resultados a JSON y resolución de rutas en output/
-│   ├── formatters.py          # Renderizado estructurado de bloques en terminal
-│   ├── geo_inspector.py       # Inspección de geolocalización IP, coordenadas, ASN e ISP
-│   ├── http_inspector.py      # Inspección HTTP, cadena de redirecciones y cabeceras de seguridad
-│   ├── resolver.py            # Motor de consultas DNS (UDP/TCP, timeouts y reintentos)
-│   ├── security_score.py      # Evaluación ponderada y calificación (A–F) de cabeceras de seguridad HTTP
-│   ├── ssl_inspector.py       # Auditoría de certificados TLS/SSL (puerto 443)
-│   ├── target_inspector.py    # Resolución inicial de objetivo (IP, PTR y HTTP Status)
-│   ├── validator.py           # Validación de dominios (IDN) e IPs
-│   └── whois_inspector.py     # Consultas y parseo de registros WHOIS (puerto 43)
-└── tests/                     # Suite de pruebas unitarias con pytest
+│   ├── blacklist_inspector.py  # Consulta y normalización de listas negras DNSBL/URIBL (DigDNS API)
+│   ├── cli_parser.py           # Definición y parseo de argumentos de línea de comandos
+│   ├── detector.py             # Detección de proveedores de DNS y correo
+│   ├── dnssec_inspector.py     # Auditoría de DNSSEC (DNSKEY, DS y flag Authenticated Data)
+│   ├── email_security.py       # Evaluación de SPF, DMARC y DKIM
+│   ├── exporter.py             # Exportación de resultados a JSON y resolución de rutas en output/
+│   ├── formatters.py           # Renderizado estructurado de bloques en terminal
+│   ├── geo_inspector.py        # Inspección de geolocalización IP, coordenadas, ASN e ISP
+│   ├── http_inspector.py       # Inspección HTTP, cadena de redirecciones y cabeceras de seguridad
+│   ├── reputation_inspector.py # Consulta de reputación IP y reportes de abuso (DigDNS API)
+│   ├── resolver.py             # Motor de consultas DNS (UDP/TCP, timeouts y reintentos)
+│   ├── security_score.py       # Evaluación ponderada y calificación (A–F) de cabeceras de seguridad HTTP
+│   ├── ssl_inspector.py        # Auditoría de certificados TLS/SSL (puerto 443)
+│   ├── target_inspector.py     # Resolución inicial de objetivo (IP, PTR y HTTP Status)
+│   ├── validator.py            # Validación de dominios (IDN) e IPs
+│   └── whois_inspector.py      # Consultas y parseo de registros WHOIS (puerto 43)
+└── tests/                      # Suite de pruebas unitarias con pytest
 ```
 
 ## Instalación
@@ -98,8 +105,10 @@ net-digger/
 | `--headers` | Inspecciona estado HTTP, cadena de redirecciones, cabeceras de seguridad y cabeceras completas. | `False` |
 | `--geo`, `--geolocation` | Consulta geolocalización, coordenadas, zona horaria, ASN y organización de la IP objetivo. | `False` |
 | `--score`, `--security-score` | Evalúa el puntaje de cabeceras de seguridad HTTP (sobre 95 puntos) y asigna una calificación (`A`–`F`). | `False` |
-| `--full` | Muestra valores íntegros sin truncar en tablas, SANs, estados WHOIS, registros SPF/DMARC, cabeceras, geolocalización y puntaje. | `False` |
-| `--all` | Activa todos los módulos y salida completa (`-t ALL`, `--ssl`, `--whois`, `--email`, `--blacklist`, `--headers`, `--geo`, `--score` y `--full`). | `False` |
+| `--reputation` | Consulta reputación IP, puntaje de abuso, reportes, ISP, tipo de uso y estado en lista blanca. | `False` |
+| `--dnssec` | Inspecciona estado DNSSEC, registros `DNSKEY` y `DS`, y el flag `Authenticated Data` (`AD`). | `False` |
+| `--full` | Muestra valores íntegros sin truncar en tablas, SANs, estados WHOIS, registros SPF/DMARC, cabeceras y reportes. | `False` |
+| `--all` | Activa todos los módulos de inspección y salida completa (`-t ALL`, `--ssl`, `--whois`, `--email`, `--blacklist`, `--headers`, `--geo`, `--score`, `--reputation`, `--dnssec` y `--full`). | `False` |
 | `-o`, `--output` | Exporta los resultados a JSON. Si se usa `-o` sin nombre guarda en `output/<objetivo>.json`; si se da solo un nombre (`reporte.json`) usa `output/reporte.json`; si se da una ruta con carpeta respeta esa ruta. | `None` *(no exporta si se omite)* |
 
 ## Ejemplos de Uso
@@ -128,7 +137,7 @@ python digger.py google.com
   python digger.py google.com -t ALL
   ```
 
-### 3. Módulos Especializados (`--ssl`, `--whois`, `--email`, `--blacklist`, `--headers`, `--geo`, `--score`)
+### 3. Módulos Especializados (`--ssl`, `--whois`, `--email`, `--blacklist`, `--headers`, `--geo`, `--score`, `--reputation`, `--dnssec`)
 
 Puedes ejecutar módulos de auditoría de forma independiente o combinada:
 
@@ -144,15 +153,15 @@ Puedes ejecutar módulos de auditoría de forma independiente o combinada:
   python digger.py openai.com --ssl --whois
   ```
 
-* **Verificar reputación (`--blacklist`), cabeceras HTTP (`--headers`), geolocalización/ASN (`--geo`) y calificación de seguridad (`--score`):**
+* **Verificar reputación IP (`--reputation`), estado DNSSEC (`--dnssec`) y geolocalización/ASN (`--geo`):**
 
   ```bash
-  python digger.py google.com --blacklist --headers --geo --score --full
+  python digger.py google.com --reputation --dnssec --geo
   ```
 
 ### 4. Auditoría Integral con Salida Completa (`--all`)
 
-Ejecuta simultáneamente la consulta de todos los registros DNS (`ALL`), inspección SSL, WHOIS, seguridad de correo, blacklist, cabeceras HTTP, geolocalización/ASN, calificación de seguridad y valores sin truncar (`--full`):
+Ejecuta simultáneamente la consulta de todos los registros DNS (`ALL`), todos los módulos de auditoría y valores sin truncar (`--full`):
 
 ```bash
 python digger.py google.com --all
@@ -235,6 +244,23 @@ python digger.py google.com --all
         [✖] X-Content-Type-Options Not set — MIME sniffing allowed              0/10
         [✖] Referrer-Policy        Not set — full URLs sent as Referer          0/10
         [✖] Permissions-Policy     Not set — browser feature access unrestric... 0/10
+
+--------------------------------------------------------------------------------
+[>] Reputation
+    Abuse Score     : 0% (44 reports from 3 users)
+    IP              : 142.251.34.78
+    ISP             : Google LLC
+    Usage Type      : Content Delivery Network
+    Last Report     : 2026-11-25T01:17:20+00:00
+    Whitelisted     : Yes
+
+--------------------------------------------------------------------------------
+[>] DNSSEC
+    DNSSEC          : Not enabled
+    Status          : Not configured
+    DNSKEY record   : Not found
+    DS record       : Not found
+    Authenticated Data: No
 ```
 
 ### 5. Auditoría Masiva Concurrente, TCP y Exportación a JSON
@@ -308,6 +334,27 @@ python digger.py -f dominios.txt -ns 8.8.8.8 -t ALL --tcp -r 3 -o reportes/audit
             "score": 15,
             "max_score": 95,
             "grade": "F"
+        },
+        "reputation": {
+            "status": "SUCCESS",
+            "ip": "142.251.34.78",
+            "abuse_score": 0,
+            "total_reports": 44,
+            "num_distinct_users": 3,
+            "isp": "Google LLC",
+            "usage_type": "Content Delivery Network",
+            "last_reported_at": "2026-11-25T01:17:20+00:00",
+            "whitelisted": true
+        },
+        "dnssec": {
+            "status": "SUCCESS",
+            "domain": "google.com",
+            "enabled": false,
+            "badge": "Not enabled",
+            "config_status": "Not configured",
+            "dnskey_record": false,
+            "ds_record": false,
+            "authenticated_data": false
         }
     }
 ]

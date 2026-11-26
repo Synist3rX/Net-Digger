@@ -317,3 +317,62 @@ def test_process_single_domain_runs_security_score():
     assert "[>] Security Score" in rendered
     assert "Grade           : F" in rendered
     assert res["security_score"] == fake_score
+
+
+def test_process_single_domain_runs_reputation_and_dnssec():
+    engine = MagicMock()
+    engine.resolver.timeout = 5.0
+
+    fake_target = {
+        "query": "google.com",
+        "ip": "142.251.34.78",
+        "ptr": None,
+        "resolves_to": "142.251.34.78",
+        "http_status": 200,
+    }
+    fake_reputation = {
+        "status": "SUCCESS",
+        "ip": "142.251.34.78",
+        "abuse_score": 0,
+        "total_reports": 44,
+        "num_distinct_users": 3,
+        "isp": "Google LLC",
+        "usage_type": "Content Delivery Network",
+        "last_reported_at": "2026-11-25T01:17:20+00:00",
+        "whitelisted": True,
+    }
+    fake_dnssec = {
+        "status": "SUCCESS",
+        "domain": "google.com",
+        "enabled": False,
+        "badge": "Not enabled",
+        "config_status": "Not configured",
+        "dnskey_record": False,
+        "ds_record": False,
+        "authenticated_data": False,
+    }
+
+    with (
+        patch("digger.gather_target_metadata", return_value=fake_target),
+        patch("digger.run_reputation_inspection", return_value=fake_reputation) as mock_rep,
+        patch("digger.run_dnssec_inspection", return_value=fake_dnssec) as mock_dnssec,
+        patch("digger.tqdm.write") as mock_write,
+    ):
+        res = process_single_domain(
+            domain="google.com",
+            engine=engine,
+            record_types=[],
+            show_dns_records=False,
+            inspect_reputation=True,
+            inspect_dnssec=True,
+            full_output=False,
+        )
+
+    mock_rep.assert_called_once()
+    mock_dnssec.assert_called_once_with(domain="google.com", engine=engine)
+
+    rendered = mock_write.call_args[0][0]
+    assert "[>] Reputation" in rendered
+    assert "[>] DNSSEC" in rendered
+    assert res["reputation"] == fake_reputation
+    assert res["dnssec"] == fake_dnssec

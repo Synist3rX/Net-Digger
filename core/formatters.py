@@ -372,3 +372,69 @@ def format_security_score_block(
             lines.append(f"        {mark} {label:<22} {status_text:<44} {pts}/{max_pts}")
 
     return lines
+
+
+def format_reputation_block(
+    reputation_info: dict | None,
+    full_output: bool = False,
+) -> list[str]:
+    lines = [SECTION_DIVIDER, "[>] Reputation"]
+
+    if not isinstance(reputation_info, dict):
+        lines.append("    [-] Reputation inspection returned no data.")
+        return lines
+
+    status = reputation_info.get("status")
+    if status == "SKIPPED":
+        lines.append(f"    [*] {reputation_info.get('message', 'Reputation check skipped.')}")
+        return lines
+
+    if status != "SUCCESS":
+        lines.append(f"    [-] {reputation_info.get('message', 'Unknown reputation error')}")
+        return lines
+
+    abuse_score = reputation_info.get("abuse_score", 0)
+    reports = reputation_info.get("total_reports", 0)
+    users = reputation_info.get("num_distinct_users", 0)
+    whitelisted = "Yes" if reputation_info.get("whitelisted") else "No"
+
+    lines.append(f"    {'Abuse Score':<16}: {abuse_score}% ({reports} reports from {users} users)")
+    lines.append(f"    {'IP':<16}: {reputation_info.get('ip', 'N/A')}")
+    lines.append(f"    {'ISP':<16}: {reputation_info.get('isp', 'Unknown')}")
+    lines.append(f"    {'Usage Type':<16}: {reputation_info.get('usage_type', 'Unknown')}")
+    lines.append(f"    {'Last Report':<16}: {reputation_info.get('last_reported_at', 'N/A')}")
+    lines.append(f"    {'Whitelisted':<16}: {whitelisted}")
+
+    if full_output and reputation_info.get("note"):
+        lines.append(f"    {'Note':<16}: {reputation_info['note']}")
+
+    return lines
+
+
+def format_dnssec_block(
+    dnssec_info: dict | None,
+    full_output: bool = False,
+) -> list[str]:
+    lines = [SECTION_DIVIDER, "[>] DNSSEC"]
+
+    if not isinstance(dnssec_info, dict):
+        lines.append("    [-] DNSSEC inspection returned no data.")
+        return lines
+
+    if dnssec_info.get("status") != "SUCCESS":
+        lines.append(f"    [-] {dnssec_info.get('message', 'Unknown DNSSEC error')}")
+        return lines
+
+    badge = dnssec_info.get("badge", "Not enabled")
+    config_status = dnssec_info.get("config_status", "Not configured")
+    dnskey_str = "Present" if dnssec_info.get("dnskey_record") else "Not found"
+    ds_str = "Present" if dnssec_info.get("ds_record") else "Not found"
+    ad_str = "Yes" if dnssec_info.get("authenticated_data") else "No"
+
+    lines.append(f"    {'DNSSEC':<16}: {badge}")
+    lines.append(f"    {'Status':<16}: {config_status}")
+    lines.append(f"    {'DNSKEY record':<16}: {dnskey_str}")
+    lines.append(f"    {'DS record':<16}: {ds_str}")
+    lines.append(f"    {'Authenticated Data':<16}: {ad_str}")
+
+    return lines
