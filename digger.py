@@ -72,7 +72,7 @@ def parse_arguments():
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Enable all inspection modules (--ssl and --whois)"
+        help="Enable all inspection modules and full output (--ssl, --whois, and --full)"
     )
 
     return parser.parse_args()
@@ -278,6 +278,7 @@ def main():
 
     args.ssl = args.ssl or args.all
     args.whois = args.whois or args.all
+    args.full = args.full or args.all
 
     # Inicializamos el motor pasando el parámetro use_tcp
     engine = DNSResolverEngine(
